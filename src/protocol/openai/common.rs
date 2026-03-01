@@ -139,15 +139,103 @@ fn tool_definition_from_core_for_responses(tool: &CoreToolDefinition) -> Value {
   })
 }
 
-fn core_content_to_openai_content_part(content: &CoreContent) -> Vec<Value> {
+fn to_openai_chat_image_source(source: &Value) -> Value {
+  match source {
+    Value::String(url) => json!({ "url": url }),
+    Value::Object(object) => {
+      if object.contains_key("url") {
+        return Value::Object(object.clone());
+      }
+      if let Some(image_url) = object.get("image_url") {
+        let mut normalized = Map::new();
+        match image_url {
+          Value::String(url) => {
+            normalized.insert("url".to_string(), Value::String(url.clone()));
+          }
+          Value::Object(image_object) => {
+            if let Some(url) = image_object.get("url") {
+              normalized.insert("url".to_string(), url.clone());
+            }
+            for (key, value) in image_object {
+              if key != "url" {
+                normalized.insert(key.clone(), value.clone());
+              }
+            }
+          }
+          _ => {
+            normalized.insert("url".to_string(), image_url.clone());
+          }
+        }
+        for (key, value) in object {
+          if key != "image_url" && key != "type" {
+            normalized.insert(key.clone(), value.clone());
+          }
+        }
+        return Value::Object(normalized);
+      }
+      Value::Object(object.clone())
+    }
+    _ => source.clone(),
+  }
+}
+
+fn to_openai_responses_image_part(source: &Value) -> Value {
+  let mut content = Map::new();
+  content.insert("type".to_string(), Value::String("input_image".to_string()));
+
+  match source {
+    Value::String(url) => {
+      content.insert("image_url".to_string(), Value::String(url.clone()));
+    }
+    Value::Object(object) => {
+      for (key, value) in object {
+        match key.as_str() {
+          "type" => {}
+          "url" => {
+            content.insert("image_url".to_string(), value.clone());
+          }
+          "image_url" => {
+            let normalized = if let Value::Object(image_object) = value {
+              image_object.get("url").cloned().unwrap_or_else(|| value.clone())
+            } else {
+              value.clone()
+            };
+            content.insert("image_url".to_string(), normalized);
+          }
+          _ => {
+            content.insert(key.clone(), value.clone());
+          }
+        }
+      }
+    }
+    _ => {
+      content.insert("image_url".to_string(), source.clone());
+    }
+  }
+
+  Value::Object(content)
+}
+
+fn core_content_to_openai_content_part(content: &CoreContent, flavor: OpenaiRequestFlavor) -> Vec<Value> {
   match content {
-    CoreContent::Text { text } => vec![json!({ "type": "text", "text": text })],
-    CoreContent::Image { source } => vec![json!({ "type": "image_url", "image_url": source })],
+    CoreContent::Text { text } => {
+      let text_type = match flavor {
+        OpenaiRequestFlavor::ChatCompletions => "text",
+        OpenaiRequestFlavor::Responses => "input_text",
+      };
+      vec![json!({ "type": text_type, "text": text })]
+    }
+    CoreContent::Image { source } => match flavor {
+      OpenaiRequestFlavor::ChatCompletions => {
+        vec![json!({ "type": "image_url", "image_url": to_openai_chat_image_source(source) })]
+      }
+      OpenaiRequestFlavor::Responses => vec![to_openai_responses_image_part(source)],
+    },
     _ => Vec::new(),
   }
 }
 
-fn core_message_to_openai(message: &CoreMessage) -> Vec<Value> {
+fn core_message_to_openai(message: &CoreMessage, flavor: OpenaiRequestFlavor) -> Vec<Value> {
   let mut text_parts = Vec::new();
   let mut reasoning_parts = Vec::new();
   let mut image_parts = Vec::new();
@@ -158,7 +246,7 @@ fn core_message_to_openai(message: &CoreMessage) -> Vec<Value> {
     match content {
       CoreContent::Text { text } => text_parts.push(text.clone()),
       CoreContent::Reasoning { text, .. } => reasoning_parts.push(text.clone()),
-      CoreContent::Image { .. } => image_parts.extend(core_content_to_openai_content_part(content)),
+      CoreContent::Image { .. } => image_parts.extend(core_content_to_openai_content_part(content, flavor)),
       CoreContent::ToolCall {
         call_id,
         name,
@@ -208,7 +296,11 @@ fn core_message_to_openai(message: &CoreMessage) -> Vec<Value> {
   let content = if !image_parts.is_empty() {
     let mut merged = Vec::new();
     if !text_parts.is_empty() {
-      merged.push(json!({ "type": "text", "text": text_parts.join("") }));
+      let text_type = match flavor {
+        OpenaiRequestFlavor::ChatCompletions => "text",
+        OpenaiRequestFlavor::Responses => "input_text",
+      };
+      merged.push(json!({ "type": text_type, "text": text_parts.join("") }));
     }
     merged.extend(image_parts);
     Value::Array(merged)
@@ -240,8 +332,11 @@ fn core_message_to_openai(message: &CoreMessage) -> Vec<Value> {
   vec![Value::Object(object)]
 }
 
-pub(crate) fn messages_from_core(messages: &[CoreMessage]) -> Vec<Value> {
-  messages.iter().flat_map(core_message_to_openai).collect()
+pub(crate) fn messages_from_core(messages: &[CoreMessage], flavor: OpenaiRequestFlavor) -> Vec<Value> {
+  messages
+    .iter()
+    .flat_map(|message| core_message_to_openai(message, flavor))
+    .collect()
 }
 
 pub(crate) fn parse_tool_choice(value: Option<Value>) -> Result<Option<CoreToolChoice>, ProtocolError> {

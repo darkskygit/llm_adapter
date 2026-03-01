@@ -95,7 +95,7 @@ pub fn encode(request: &CoreRequest, stream: bool) -> Value {
     request,
     stream,
     OpenaiRequestFlavor::Responses,
-    messages_from_core(&request.messages),
+    messages_from_core(&request.messages, OpenaiRequestFlavor::Responses),
   )
 }
 
@@ -111,7 +111,17 @@ mod tests {
     let input = json!({
       "model": "gpt-4.1",
       "input": [
-        { "role": "user", "content": "hello" },
+        {
+          "role": "user",
+          "content": [
+            { "type": "input_text", "text": "hello" },
+            {
+              "type": "input_image",
+              "image_url": "https://example.com/a.png",
+              "detail": "high"
+            }
+          ]
+        },
         {
           "role": "assistant",
           "tool_calls": [
@@ -142,7 +152,10 @@ mod tests {
       "messages": [
         {
           "role": "user",
-          "content": [{ "type": "text", "text": "hello" }]
+          "content": [
+            { "type": "text", "text": "hello" },
+            { "type": "image", "source": { "url": "https://example.com/a.png", "detail": "high" } }
+          ]
         },
         {
           "role": "assistant",
@@ -181,9 +194,17 @@ mod tests {
       messages: vec![
         CoreMessage {
           role: CoreRole::User,
-          content: vec![CoreContent::Text {
-            text: "hello".to_string(),
-          }],
+          content: vec![
+            CoreContent::Text {
+              text: "hello".to_string(),
+            },
+            CoreContent::Image {
+              source: json!({
+                "url": "https://example.com/a.png",
+                "detail": "high"
+              }),
+            },
+          ],
         },
         CoreMessage {
           role: CoreRole::Assistant,
@@ -216,6 +237,13 @@ mod tests {
     let payload = encode(&core, true);
     assert_eq!(payload["stream"], true);
     assert_eq!(payload["max_output_tokens"], 256);
+    assert_eq!(payload["input"][0]["content"][0]["type"], "input_text");
+    assert_eq!(payload["input"][0]["content"][1]["type"], "input_image");
+    assert_eq!(
+      payload["input"][0]["content"][1]["image_url"],
+      "https://example.com/a.png"
+    );
+    assert_eq!(payload["input"][0]["content"][1]["detail"], "high");
     assert_eq!(payload["tools"][0]["name"], "doc_read");
     assert_eq!(payload["tool_choice"]["name"], Value::String("doc_read".to_string()));
     assert_eq!(payload["reasoning"]["effort"], "medium");

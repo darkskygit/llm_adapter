@@ -71,7 +71,7 @@ pub fn encode(request: &CoreRequest, stream: bool) -> Value {
     request,
     stream,
     OpenaiRequestFlavor::ChatCompletions,
-    messages_from_core(&request.messages),
+    messages_from_core(&request.messages, OpenaiRequestFlavor::ChatCompletions),
   )
 }
 
@@ -208,9 +208,17 @@ mod tests {
       messages: vec![
         CoreMessage {
           role: CoreRole::User,
-          content: vec![CoreContent::Text {
-            text: "hello".to_string(),
-          }],
+          content: vec![
+            CoreContent::Text {
+              text: "hello".to_string(),
+            },
+            CoreContent::Image {
+              source: json!({
+                "url": "https://example.com/a.png",
+                "detail": "low"
+              }),
+            },
+          ],
         },
         CoreMessage {
           role: CoreRole::Assistant,
@@ -243,6 +251,13 @@ mod tests {
     assert_eq!(payload["stream_options"]["include_usage"], true);
     assert_eq!(payload["max_completion_tokens"], 256);
     assert_eq!(payload["temperature"], 0.3);
+    assert_eq!(payload["messages"][0]["content"][0]["type"], "text");
+    assert_eq!(payload["messages"][0]["content"][1]["type"], "image_url");
+    assert_eq!(
+      payload["messages"][0]["content"][1]["image_url"]["url"],
+      "https://example.com/a.png"
+    );
+    assert_eq!(payload["messages"][0]["content"][1]["image_url"]["detail"], "low");
     assert_eq!(
       payload["messages"][1]["tool_calls"][0]["function"]["arguments"],
       "{\"docId\":\"a1\"}"

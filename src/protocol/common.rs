@@ -74,10 +74,53 @@ pub(crate) fn parse_text_or_array_content(value: Option<Value>) -> Result<Vec<Co
                   }
                 }
                 "image_url" => {
-                  let source = object
-                    .get("image_url")
-                    .cloned()
-                    .unwrap_or_else(|| Value::Object(object.clone()));
+                  let source = match object.get("image_url") {
+                    Some(Value::String(url)) => {
+                      let mut source = serde_json::Map::new();
+                      source.insert("url".to_string(), Value::String(url.clone()));
+                      Value::Object(source)
+                    }
+                    Some(value) => value.clone(),
+                    None => Value::Object(object.clone()),
+                  };
+                  content.push(CoreContent::Image { source });
+                }
+                "input_image" => {
+                  let mut source = serde_json::Map::new();
+                  if let Some(image_url) = object.get("image_url") {
+                    match image_url {
+                      Value::String(url) => {
+                        source.insert("url".to_string(), Value::String(url.clone()));
+                      }
+                      Value::Object(image_url_object) => {
+                        if let Some(url) = image_url_object.get("url") {
+                          source.insert("url".to_string(), url.clone());
+                        }
+                        for (key, value) in image_url_object {
+                          if key != "url" {
+                            source.insert(key.clone(), value.clone());
+                          }
+                        }
+                      }
+                      _ => {
+                        source.insert("image_url".to_string(), image_url.clone());
+                      }
+                    }
+                  }
+                  if let Some(file_id) = object.get("file_id") {
+                    source.insert("file_id".to_string(), file_id.clone());
+                  }
+                  if let Some(detail) = object.get("detail") {
+                    source.insert("detail".to_string(), detail.clone());
+                  }
+                  if source.is_empty() {
+                    for (key, value) in &object {
+                      if key != "type" {
+                        source.insert(key.clone(), value.clone());
+                      }
+                    }
+                  }
+                  let source = Value::Object(source);
                   content.push(CoreContent::Image { source });
                 }
                 "image" => {
