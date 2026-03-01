@@ -1,14 +1,17 @@
 use thiserror::Error;
 
+mod encode;
 mod parse;
-mod rewrite;
 mod sse;
 
+pub use encode::{
+  AnthropicStreamEncoder, IncrementalSseEncoder, OpenaiChatStreamEncoder, OpenaiResponsesStreamEncoder,
+  StreamEncodingTarget, encode_anthropic_stream, encode_openai_chat_stream, encode_openai_responses_stream,
+};
 pub use parse::{
   AnthropicStreamParser, OpenaiChatStreamParser, OpenaiResponsesStreamParser, parse_anthropic_stream,
   parse_openai_chat_stream, parse_openai_responses_stream,
 };
-pub use rewrite::{rewrite_anthropic_to_chat, rewrite_chat_to_anthropic, rewrite_chat_to_responses};
 pub use sse::{SseFrameDecoder, encode_sse_frame, parse_sse_frames};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -173,7 +176,7 @@ mod tests {
   }
 
   #[test]
-  fn should_rewrite_anthropic_to_chat() {
+  fn should_encode_anthropic_events_to_chat_stream() {
     let raw = concat!(
       "event: message_start\n",
       "data: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_1\",\"model\":\"claude-3\",\"usage\":{\"\
@@ -188,27 +191,29 @@ mod tests {
       "data: [DONE]\n\n"
     );
 
-    let rewritten = rewrite_anthropic_to_chat(raw).unwrap();
-    let frames = parse_sse_frames(&rewritten);
+    let events = parse_anthropic_stream(raw).unwrap();
+    let encoded = encode_openai_chat_stream(&events);
+    let frames = parse_sse_frames(&encoded);
     assert!(matches!(frames.last(), Some(frame) if frame.data == "[DONE]"));
 
-    let events = parse_openai_chat_stream(&rewritten).unwrap();
+    let reparsed = parse_openai_chat_stream(&encoded).unwrap();
     assert!(
-      events
+      reparsed
         .iter()
         .any(|event| matches!(event, StreamEvent::TextDelta { text } if text == "Hi"))
     );
     assert!(
-      events
+      reparsed
         .iter()
         .any(|event| matches!(event, StreamEvent::Done { finish_reason: Some(reason), .. } if reason == "stop"))
     );
   }
 
   #[test]
-  fn should_rewrite_chat_to_responses() {
-    let rewritten = rewrite_chat_to_responses(&sample_chat_stream()).unwrap();
-    let frames = parse_sse_frames(&rewritten);
+  fn should_encode_chat_events_to_responses_stream() {
+    let events = parse_openai_chat_stream(&sample_chat_stream()).unwrap();
+    let encoded = encode_openai_responses_stream(&events);
+    let frames = parse_sse_frames(&encoded);
     assert!(matches!(frames.last(), Some(frame) if frame.data == "[DONE]"));
 
     let created = event_index(&frames, "response.created");
@@ -222,21 +227,22 @@ mod tests {
     let completed_payload: Value = serde_json::from_str(&frames[completed].data).unwrap();
     assert_eq!(completed_payload["finish_reason"], "tool_calls");
 
-    let events = parse_openai_responses_stream(&rewritten).unwrap();
-    assert!(events.iter().any(
+    let reparsed = parse_openai_responses_stream(&encoded).unwrap();
+    assert!(reparsed.iter().any(
       |event| matches!(event, StreamEvent::ToolCall { call_id, name, .. } if call_id == "call_1" && name == "doc_read")
     ));
     assert!(
-      events
+      reparsed
         .iter()
         .any(|event| matches!(event, StreamEvent::Done { finish_reason: Some(reason), .. } if reason == "tool_calls"))
     );
   }
 
   #[test]
-  fn should_rewrite_chat_to_anthropic() {
-    let rewritten = rewrite_chat_to_anthropic(&sample_chat_stream()).unwrap();
-    let frames = parse_sse_frames(&rewritten);
+  fn should_encode_chat_events_to_anthropic_stream() {
+    let events = parse_openai_chat_stream(&sample_chat_stream()).unwrap();
+    let encoded = encode_anthropic_stream(&events);
+    let frames = parse_sse_frames(&encoded);
     assert!(matches!(frames.last(), Some(frame) if frame.data == "[DONE]"));
 
     let message_start = event_index(&frames, "message_start");
@@ -250,18 +256,133 @@ mod tests {
     let message_delta_payload: Value = serde_json::from_str(&frames[message_delta].data).unwrap();
     assert_eq!(message_delta_payload["delta"]["stop_reason"], "tool_calls");
 
-    let events = parse_anthropic_stream(&rewritten).unwrap();
-    assert!(matches!(events.first(), Some(StreamEvent::MessageStart { .. })));
-    assert!(events.iter().any(
+    let reparsed = parse_anthropic_stream(&encoded).unwrap();
+    assert!(matches!(reparsed.first(), Some(StreamEvent::MessageStart { .. })));
+    assert!(reparsed.iter().any(
       |event| matches!(event, StreamEvent::ToolCall { call_id, name, .. } if call_id == "call_1" && name == "doc_read")
     ));
     assert!(matches!(
-      events.last(),
+      reparsed.last(),
       Some(StreamEvent::Done {
         finish_reason: Some(reason),
         ..
       }) if reason == "tool_calls"
     ));
+  }
+
+  #[test]
+  fn should_encode_responses_stream_with_tool_result_citation_and_error() {
+    let events = vec![
+      StreamEvent::MessageStart {
+        id: Some("resp_9".to_string()),
+        model: Some("gpt-4.1".to_string()),
+      },
+      StreamEvent::ToolResult {
+        call_id: "call_7".to_string(),
+        output: json!({ "ok": true }),
+        is_error: Some(false),
+      },
+      StreamEvent::Citation {
+        index: 2,
+        url: "https://example.com/citation".to_string(),
+      },
+      StreamEvent::Error {
+        message: "boom".to_string(),
+        code: Some("bad_request".to_string()),
+      },
+      StreamEvent::Done {
+        finish_reason: Some("stop".to_string()),
+        usage: None,
+      },
+    ];
+
+    let encoded = encode_openai_responses_stream(&events);
+    let reparsed = parse_openai_responses_stream(&encoded).unwrap();
+
+    assert!(
+      reparsed
+        .iter()
+        .any(|event| matches!(event, StreamEvent::ToolResult { call_id, .. } if call_id == "call_7"))
+    );
+    assert!(reparsed.iter().any(
+      |event| matches!(event, StreamEvent::Citation { index, url } if *index == 2 && url == "https://example.com/citation")
+    ));
+    assert!(
+      reparsed
+        .iter()
+        .any(|event| matches!(event, StreamEvent::Error { message, .. } if message == "boom"))
+    );
+  }
+
+  #[test]
+  fn should_encode_chat_stream_with_citation_and_error() {
+    let events = vec![
+      StreamEvent::MessageStart {
+        id: Some("chat_9".to_string()),
+        model: Some("gpt-4.1".to_string()),
+      },
+      StreamEvent::Citation {
+        index: 2,
+        url: "https://example.com/c2".to_string(),
+      },
+      StreamEvent::Error {
+        message: "upstream error".to_string(),
+        code: Some("rate_limit".to_string()),
+      },
+      StreamEvent::Done {
+        finish_reason: Some("stop".to_string()),
+        usage: None,
+      },
+    ];
+
+    let encoded = encode_openai_chat_stream(&events);
+    let reparsed = parse_openai_chat_stream(&encoded).unwrap();
+
+    assert!(reparsed.iter().any(
+      |event| matches!(event, StreamEvent::Citation { index, url } if *index == 2 && url == "https://example.com/c2")
+    ));
+    assert!(
+      reparsed
+        .iter()
+        .any(|event| matches!(event, StreamEvent::Error { code: Some(code), .. } if code == "rate_limit"))
+    );
+  }
+
+  #[test]
+  fn should_encode_anthropic_stream_with_tool_result_and_error() {
+    let events = vec![
+      StreamEvent::MessageStart {
+        id: Some("msg_9".to_string()),
+        model: Some("claude-sonnet-4-5-20250929".to_string()),
+      },
+      StreamEvent::ToolResult {
+        call_id: "call_9".to_string(),
+        output: json!({ "ok": true }),
+        is_error: Some(false),
+      },
+      StreamEvent::Error {
+        message: "tool failed".to_string(),
+        code: Some("tool_error".to_string()),
+      },
+      StreamEvent::Done {
+        finish_reason: Some("stop".to_string()),
+        usage: None,
+      },
+    ];
+
+    let encoded = encode_anthropic_stream(&events);
+    let reparsed = parse_anthropic_stream(&encoded).unwrap();
+
+    assert!(
+      reparsed
+        .iter()
+        .any(|event| matches!(event, StreamEvent::ToolResult { call_id, .. } if call_id == "call_9"))
+    );
+    assert!(
+      reparsed
+        .iter()
+        .any(|event| matches!(event, StreamEvent::Error { code: Some(code), .. } if code == "tool_error"))
+    );
   }
 
   #[test]

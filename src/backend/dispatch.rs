@@ -5,8 +5,8 @@ use super::{
     core::{CoreRequest, CoreResponse, StreamEvent},
     protocol::{ProtocolError, anthropic, openai},
     stream::{
-      AnthropicStreamParser, OpenaiChatStreamParser, OpenaiResponsesStreamParser, SseFrame, SseFrameDecoder,
-      StreamParseError,
+      AnthropicStreamParser, IncrementalSseEncoder, OpenaiChatStreamParser, OpenaiResponsesStreamParser, SseFrame,
+      SseFrameDecoder, StreamEncodingTarget, StreamParseError, encode_sse_frame,
     },
   },
   BackendConfig, BackendError, BackendHttpClient, BackendProtocol, HttpRequest,
@@ -93,27 +93,30 @@ pub fn dispatch_request(
   protocol.decode_response(&response.body).map_err(map_protocol_error)
 }
 
-pub fn dispatch_stream(
+pub fn collect_stream_events(
   client: &dyn BackendHttpClient,
   config: &BackendConfig,
   protocol: BackendProtocol,
   request: &CoreRequest,
 ) -> Result<Vec<StreamEvent>, BackendError> {
   let mut events = Vec::new();
-  dispatch_stream_with_handler(client, config, protocol, request, &mut |event| {
+  dispatch_stream_events_with(client, config, protocol, request, |event| {
     events.push(event);
     Ok(())
   })?;
   Ok(events)
 }
 
-pub fn dispatch_stream_with_handler(
+pub fn dispatch_stream_events_with<F>(
   client: &dyn BackendHttpClient,
   config: &BackendConfig,
   protocol: BackendProtocol,
   request: &CoreRequest,
-  on_event: &mut dyn FnMut(StreamEvent) -> Result<(), BackendError>,
-) -> Result<(), BackendError> {
+  mut on_event: F,
+) -> Result<(), BackendError>
+where
+  F: FnMut(StreamEvent) -> Result<(), BackendError>,
+{
   let mut frame_decoder = SseFrameDecoder::default();
   let mut parser = IncrementalStreamParser::new(&protocol);
 
@@ -134,6 +137,49 @@ pub fn dispatch_stream_with_handler(
   }
   for event in parser.finish() {
     on_event(event)?;
+  }
+
+  Ok(())
+}
+
+pub fn collect_stream_encoded(
+  client: &dyn BackendHttpClient,
+  config: &BackendConfig,
+  source_protocol: BackendProtocol,
+  target: StreamEncodingTarget,
+  request: &CoreRequest,
+) -> Result<String, BackendError> {
+  let mut out = String::new();
+  dispatch_stream_encoded_with(client, config, source_protocol, target, request, |chunk| {
+    out.push_str(chunk);
+    Ok(())
+  })?;
+  Ok(out)
+}
+
+pub fn dispatch_stream_encoded_with<F>(
+  client: &dyn BackendHttpClient,
+  config: &BackendConfig,
+  source_protocol: BackendProtocol,
+  target: StreamEncodingTarget,
+  request: &CoreRequest,
+  mut on_chunk: F,
+) -> Result<(), BackendError>
+where
+  F: FnMut(&str) -> Result<(), BackendError>,
+{
+  let mut encoder = IncrementalSseEncoder::new(target);
+  dispatch_stream_events_with(client, config, source_protocol, request, |event| {
+    for frame in encoder.push_event(&event) {
+      let serialized = encode_sse_frame(&frame);
+      on_chunk(&serialized)?;
+    }
+    Ok(())
+  })?;
+
+  for frame in encoder.finish() {
+    let serialized = encode_sse_frame(&frame);
+    on_chunk(&serialized)?;
   }
 
   Ok(())

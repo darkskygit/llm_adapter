@@ -4,7 +4,7 @@
 //! retry/fallback policies on top of this library.
 
 use crate::{
-  backend::{BackendConfig, BackendError, BackendHttpClient, BackendProtocol, dispatch_request, dispatch_stream},
+  backend::{BackendConfig, BackendError, BackendHttpClient, BackendProtocol, collect_stream_events, dispatch_request},
   core::{CoreRequest, CoreResponse, StreamEvent},
 };
 
@@ -49,7 +49,7 @@ pub fn dispatch_stream_with_fallback(
     }
 
     let routed_request = with_model(request, &route.model);
-    match dispatch_stream(client, &route.config, route.protocol, &routed_request) {
+    match collect_stream_events(client, &route.config, route.protocol, &routed_request) {
       Ok(stream) => return Ok((route.provider_id.clone(), stream)),
       Err(error) => {
         last_error = Some(error);

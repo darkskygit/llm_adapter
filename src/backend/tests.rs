@@ -3,13 +3,14 @@ use serde_json::{Value, json};
 use super::{
   super::{
     core::StreamEvent,
+    stream::StreamEncodingTarget,
     test_support::{
       MockHttpClient, MockHttpResponse, sample_backend_config, sample_backend_config_with_header, sample_request,
       sse_done, sse_event,
     },
   },
-  BackendError, BackendProtocol, BackendRequestLayer, HttpResponse, HttpStreamResponse, dispatch_request,
-  dispatch_stream, dispatch_stream_with_handler,
+  BackendError, BackendProtocol, BackendRequestLayer, HttpResponse, HttpStreamResponse, collect_stream_events,
+  dispatch_request, dispatch_stream_encoded_with, dispatch_stream_events_with,
 };
 
 #[test]
@@ -121,7 +122,7 @@ fn should_dispatch_openai_responses_stream() {
     .concat(),
   }))]);
 
-  let events = dispatch_stream(
+  let events = collect_stream_events(
     &client,
     &sample_backend_config_with_header(false),
     BackendProtocol::OpenaiResponses,
@@ -139,7 +140,7 @@ fn should_dispatch_openai_responses_stream() {
 }
 
 #[test]
-fn should_dispatch_stream_with_handler_incrementally() {
+fn should_dispatch_stream_events_with_incrementally() {
   let client = MockHttpClient::with_stream_responses(vec![MockHttpResponse::Stream(Ok(HttpStreamResponse {
     status: 200,
     body: vec![
@@ -166,12 +167,12 @@ fn should_dispatch_stream_with_handler_incrementally() {
   }))]);
 
   let mut seen = Vec::new();
-  let result = dispatch_stream_with_handler(
+  let result = dispatch_stream_events_with(
     &client,
     &sample_backend_config_with_header(false),
     BackendProtocol::OpenaiResponses,
     &sample_request(),
-    &mut |event| {
+    |event| {
       seen.push(event.clone());
       Err(BackendError::Http("stop_after_first_event".to_string()))
     },
@@ -179,6 +180,65 @@ fn should_dispatch_stream_with_handler_incrementally() {
 
   assert!(matches!(result, Err(BackendError::Http(reason)) if reason == "stop_after_first_event"));
   assert_eq!(seen.len(), 1);
+}
+
+#[test]
+fn should_dispatch_stream_encoded_with_incrementally() {
+  let client = MockHttpClient::with_stream_responses(vec![MockHttpResponse::Stream(Ok(HttpStreamResponse {
+    status: 200,
+    body: vec![
+      sse_event(
+        "message_start",
+        json!({
+          "type": "message_start",
+          "message": {
+            "id": "msg_22",
+            "model": "claude-sonnet-4-5-20250929",
+            "usage": { "input_tokens": 4, "output_tokens": 0 },
+          },
+        }),
+      ),
+      sse_event(
+        "content_block_delta",
+        json!({
+          "type": "content_block_delta",
+          "index": 0,
+          "delta": { "type": "text_delta", "text": "Hi" },
+        }),
+      ),
+      sse_event(
+        "message_delta",
+        json!({
+          "type": "message_delta",
+          "delta": { "stop_reason": "end_turn" },
+          "usage": { "input_tokens": 4, "output_tokens": 2 },
+        }),
+      ),
+      sse_event("message_stop", json!({ "type": "message_stop" })),
+      sse_done(),
+    ]
+    .concat(),
+  }))]);
+
+  let mut chunks = Vec::new();
+  dispatch_stream_encoded_with(
+    &client,
+    &sample_backend_config_with_header(false),
+    BackendProtocol::AnthropicMessages,
+    StreamEncodingTarget::OpenaiResponses,
+    &sample_request(),
+    |chunk| {
+      chunks.push(chunk.to_string());
+      Ok(())
+    },
+  )
+  .unwrap();
+
+  assert!(!chunks.is_empty());
+  assert!(chunks.iter().any(|chunk| chunk.contains("event: response.created")));
+  assert!(chunks.iter().any(|chunk| chunk.contains("event: response.completed")));
+  assert!(chunks.iter().any(|chunk| chunk.contains("data: [DONE]")));
+  assert!(chunks.len() >= 3);
 }
 
 #[test]
@@ -350,7 +410,7 @@ fn should_dispatch_vertex_anthropic_stream() {
   let mut request = sample_request();
   request.model = "claude-sonnet-4-5@20250929".to_string();
 
-  let events = dispatch_stream(&client, &config, BackendProtocol::AnthropicMessages, &request).unwrap();
+  let events = collect_stream_events(&client, &config, BackendProtocol::AnthropicMessages, &request).unwrap();
   assert!(events.iter().any(|event| matches!(event, StreamEvent::Done { .. })));
 
   let requests = client.requests();

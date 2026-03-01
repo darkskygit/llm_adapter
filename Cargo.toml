@@ -4,6 +4,9 @@ version = "0.1.0"
 edition = "2024"
 license = "AGPL-3.0-only"
 authors = ["DarkSky <darksky2048@gmail.com>"]
+keywords = ["llm", "language model", "adapter", "api client"]
+description = "A Rust library for adapting various language model APIs to a unified interface."
+repository = "https://github.com/darkskygit/llm_adapter"
 
 [dependencies]
 base64 = "0.22"

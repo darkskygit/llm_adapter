@@ -67,6 +67,31 @@ fn maybe_emit_tool_call(events: &mut Vec<StreamEvent>, call_id: &str, state: &mu
   state.emitted = true;
 }
 
+fn parse_json_like_value(value: Option<&Value>) -> Value {
+  match value {
+    Some(Value::String(text)) => parse_json_string(text),
+    Some(other) => other.clone(),
+    None => Value::Null,
+  }
+}
+
+fn parse_stream_error(payload: &Value) -> StreamEvent {
+  let error = payload.get("error").unwrap_or(payload);
+  let message = error
+    .get("message")
+    .or_else(|| error.get("detail"))
+    .and_then(Value::as_str)
+    .unwrap_or("upstream stream error")
+    .to_string();
+  let code = error
+    .get("code")
+    .or_else(|| error.get("type"))
+    .and_then(Value::as_str)
+    .map(ToString::to_string);
+
+  StreamEvent::Error { message, code }
+}
+
 #[derive(Debug, Default)]
 pub struct OpenaiChatStreamParser {
   started: bool,
@@ -97,6 +122,11 @@ impl OpenaiChatStreamParser {
       context: "openai_chat_stream",
       source,
     })?;
+
+    if json.get("error").is_some() {
+      events.push(parse_stream_error(&json));
+      return Ok(events);
+    }
 
     if self.stream_id.is_none() {
       self.stream_id = json.get("id").and_then(Value::as_str).map(ToString::to_string);
@@ -382,26 +412,64 @@ impl OpenaiResponsesStreamParser {
       }
       "response.output_item.added" => {
         let item = json.get("item").cloned().unwrap_or_else(|| json.clone());
-        if item.get("type").and_then(Value::as_str) == Some("function_call") {
-          let call_id = item
-            .get("call_id")
-            .or_else(|| item.get("id"))
-            .and_then(Value::as_str)
-            .unwrap_or("call_0")
-            .to_string();
-          let name = item
-            .get("name")
-            .and_then(Value::as_str)
-            .map(ToString::to_string)
-            .unwrap_or_default();
-          let arguments = item.get("arguments").and_then(Value::as_str).unwrap_or("{}");
-          events.push(StreamEvent::ToolCall {
-            call_id,
-            name,
-            arguments: parse_json_string(arguments),
-            thought: None,
+        match item.get("type").and_then(Value::as_str).unwrap_or_default() {
+          "function_call" => {
+            let call_id = item
+              .get("call_id")
+              .or_else(|| item.get("id"))
+              .and_then(Value::as_str)
+              .unwrap_or("call_0")
+              .to_string();
+            let name = item
+              .get("name")
+              .and_then(Value::as_str)
+              .map(ToString::to_string)
+              .unwrap_or_default();
+            let arguments = item.get("arguments").and_then(Value::as_str).unwrap_or("{}");
+            events.push(StreamEvent::ToolCall {
+              call_id,
+              name,
+              arguments: parse_json_string(arguments),
+              thought: None,
+            });
+          }
+          "function_call_output" => {
+            let call_id = item
+              .get("call_id")
+              .or_else(|| item.get("id"))
+              .and_then(Value::as_str)
+              .unwrap_or("call_0")
+              .to_string();
+            events.push(StreamEvent::ToolResult {
+              call_id,
+              output: parse_json_like_value(item.get("output")),
+              is_error: item.get("is_error").and_then(Value::as_bool),
+            });
+          }
+          _ => {}
+        }
+      }
+      "response.output_text.annotation.added" => {
+        let annotation = json.get("annotation").unwrap_or(&Value::Null);
+        if let Some(url) = annotation
+          .get("url")
+          .or_else(|| annotation.get("value"))
+          .and_then(Value::as_str)
+        {
+          let index = json
+            .get("annotation_index")
+            .and_then(Value::as_u64)
+            .and_then(|value| usize::try_from(value).ok())
+            .map(|value| value + 1)
+            .unwrap_or(1);
+          events.push(StreamEvent::Citation {
+            index,
+            url: url.to_string(),
           });
         }
+      }
+      "response.error" => {
+        events.push(parse_stream_error(json));
       }
       "response.completed" => {
         self.status = json
@@ -526,25 +594,41 @@ impl AnthropicStreamParser {
           .cloned()
           .unwrap_or_else(|| Value::Object(Map::new()));
 
-        if block.get("type").and_then(Value::as_str) == Some("tool_use") {
-          let call_id = block.get("id").and_then(Value::as_str).unwrap_or("call_0").to_string();
-          let name = block
-            .get("name")
-            .and_then(Value::as_str)
-            .unwrap_or_default()
-            .to_string();
-          let thought = block.get("thought").and_then(Value::as_str).map(ToString::to_string);
+        match block.get("type").and_then(Value::as_str).unwrap_or_default() {
+          "tool_use" => {
+            let call_id = block.get("id").and_then(Value::as_str).unwrap_or("call_0").to_string();
+            let name = block
+              .get("name")
+              .and_then(Value::as_str)
+              .unwrap_or_default()
+              .to_string();
+            let thought = block.get("thought").and_then(Value::as_str).map(ToString::to_string);
 
-          self.tool_blocks.insert(
-            index,
-            AnthropicToolBlockState {
+            self.tool_blocks.insert(
+              index,
+              AnthropicToolBlockState {
+                call_id,
+                name,
+                thought,
+                arguments: String::new(),
+                emitted: false,
+              },
+            );
+          }
+          "tool_result" => {
+            let call_id = block
+              .get("tool_use_id")
+              .or_else(|| block.get("id"))
+              .and_then(Value::as_str)
+              .unwrap_or("call_0")
+              .to_string();
+            events.push(StreamEvent::ToolResult {
               call_id,
-              name,
-              thought,
-              arguments: String::new(),
-              emitted: false,
-            },
-          );
+              output: parse_json_like_value(block.get("content")),
+              is_error: block.get("is_error").and_then(Value::as_bool),
+            });
+          }
+          _ => {}
         }
       }
       "content_block_delta" => {
@@ -617,6 +701,9 @@ impl AnthropicStreamParser {
       }
       "message_stop" => {
         return true;
+      }
+      "error" => {
+        events.push(parse_stream_error(json));
       }
       _ => {}
     }
