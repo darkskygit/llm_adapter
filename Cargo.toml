@@ -8,8 +8,15 @@ keywords = ["llm", "language model", "adapter", "api client"]
 description = "A Rust library for adapting various language model APIs to a unified interface."
 repository = "https://github.com/darkskygit/llm_adapter"
 
+[features]
+default = []
+benchmark-cli = ["dep:anyhow", "dep:clap", "dep:rand", "dep:toml"]
+
 [dependencies]
+anyhow = { version = "1", optional = true }
 base64 = "0.22"
+clap = { version = "4", features = ["derive"], optional = true }
+rand = { version = "0.8", optional = true }
 reqwest = { version = "0.13", default-features = false, features = [
     "blocking",
     "json",
@@ -18,3 +25,9 @@ reqwest = { version = "0.13", default-features = false, features = [
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"
+toml = { version = "0.9", optional = true }
+
+[[bin]]
+name = "llm_benchmark"
+path = "src/bin/llm_benchmark.rs"
+required-features = ["benchmark-cli"]

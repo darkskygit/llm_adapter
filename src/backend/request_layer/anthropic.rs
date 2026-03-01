@@ -24,9 +24,12 @@ fn build_anthropic_headers(config: &BackendConfig, stream: bool) -> Vec<(String,
         "application/json".to_string()
       },
     ),
-    ("x-api-key".to_string(), config.auth_token.clone()),
     ("anthropic-version".to_string(), "2023-06-01".to_string()),
   ];
+
+  if !config.auth_token.is_empty() {
+    headers.push(("x-api-key".to_string(), config.auth_token.clone()));
+  }
 
   headers.sort_by(|a, b| a.0.cmp(&b.0));
   headers

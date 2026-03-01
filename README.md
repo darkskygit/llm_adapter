@@ -3,6 +3,7 @@
 A small Rust library for adapting multiple LLM provider APIs into one internal request/response model.
 
 `llm_adapter` gives you:
+
 - A provider-neutral core model (`CoreRequest`, `CoreResponse`, `StreamEvent`)
 - Protocol codecs for OpenAI Chat Completions, OpenAI Responses, and Anthropic Messages
 - Streaming SSE parsing and cross-protocol stream rewriting helpers
@@ -104,12 +105,29 @@ dispatch_stream_events_with(
 ## Fallback Routing and Middleware
 
 This crate exposes reusable orchestration helpers:
+
 - `router::dispatch_with_fallback`
 - `router::dispatch_stream_with_fallback`
 - `middleware::run_request_middleware_chain`
 - `middleware::run_stream_middleware_chain`
 
 They are designed for host apps that want custom retry, fallback, and policy pipelines.
+
+## Benchmark CLI
+
+This repository also ships a benchmark binary, now using `llm_adapter::backend::dispatch_request` instead of manual endpoint requests.
+
+```bash
+cargo run --bin llm_benchmark -- config
+cargo run --bin llm_benchmark -- run -c llm-benchmark.toml
+cargo run --bin llm_benchmark -- prompts -c llm-benchmark.toml
+```
+
+Configuration auto-discovery order:
+
+- `llm-benchmark.toml`
+- `benchmark.toml`
+- `config.toml`
 
 ## Development
 

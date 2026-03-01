@@ -140,8 +140,11 @@ fn build_bearer_headers(config: &BackendConfig, stream: bool) -> Vec<(String, St
         "application/json".to_string()
       },
     ),
-    ("authorization".to_string(), format!("Bearer {}", config.auth_token)),
   ];
+
+  if !config.auth_token.is_empty() {
+    headers.push(("authorization".to_string(), format!("Bearer {}", config.auth_token)));
+  }
 
   headers.sort_by(|a, b| a.0.cmp(&b.0));
   headers
