@@ -118,9 +118,9 @@ They are designed for host apps that want custom retry, fallback, and policy pip
 This repository also ships a benchmark binary, now using `llm_adapter::backend::dispatch_request` instead of manual endpoint requests.
 
 ```bash
-cargo run --bin llm_benchmark -- config
-cargo run --bin llm_benchmark -- run -c llm-benchmark.toml
-cargo run --bin llm_benchmark -- prompts -c llm-benchmark.toml
+cargo run --bin llm_benchmark --features benchmark-cli -- config
+cargo run --bin llm_benchmark --features benchmark-cli -- run -c llm-benchmark.toml
+cargo run --bin llm_benchmark --features benchmark-cli -- prompts -c llm-benchmark.toml
 ```
 
 Configuration auto-discovery order:
@@ -128,6 +128,16 @@ Configuration auto-discovery order:
 - `llm-benchmark.toml`
 - `benchmark.toml`
 - `config.toml`
+
+## Compatibility CLI
+
+`llm_compat` provides provider compatibility checks.
+
+```bash
+cargo run --bin llm_compat --features benchmark-cli -- config
+cargo run --bin llm_compat --features benchmark-cli -- providers -c llm-compat.toml
+cargo run --bin llm_compat --features benchmark-cli -- run -c llm-compat.toml
+```
 
 ## Development
 

@@ -9,7 +9,7 @@ fn parse_message_from_response(message: &Value) -> CoreMessage {
   let role = parse_role_lossy(get_str_or(message, "role", "assistant"));
   let mut content = Vec::new();
 
-  if let Some(text) = message.get("content").and_then(Value::as_str)
+  if let Some(text) = get_str(message, "content")
     && !text.is_empty()
   {
     content.push(CoreContent::Text { text: text.to_string() });
@@ -17,18 +17,18 @@ fn parse_message_from_response(message: &Value) -> CoreMessage {
 
   if let Some(items) = message.get("content").and_then(Value::as_array) {
     for item in items {
-      if let Some(text) = item.get("text").and_then(Value::as_str)
+      if let Some(text) = get_str(item, "text")
         && !text.is_empty()
       {
         content.push(CoreContent::Text { text: text.to_string() });
-      } else if item.get("type").and_then(Value::as_str) == Some("image_url") {
+      } else if get_str(item, "type") == Some("image_url") {
         let source = item.get("image_url").cloned().unwrap_or(Value::Null);
         content.push(CoreContent::Image { source });
       }
     }
   }
 
-  if let Some(reasoning) = message.get("reasoning_content").and_then(Value::as_str)
+  if let Some(reasoning) = get_str(message, "reasoning_content")
     && !reasoning.is_empty()
   {
     content.push(CoreContent::Reasoning {

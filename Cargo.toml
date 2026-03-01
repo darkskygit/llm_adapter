@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 license = "AGPL-3.0-only"
 authors = ["DarkSky <darksky2048@gmail.com>"]
-keywords = ["llm", "language model", "adapter", "api client"]
+keywords = ["llm", "language-model", "adapter", "api-client"]
 description = "A Rust library for adapting various language model APIs to a unified interface."
 repository = "https://github.com/darkskygit/llm_adapter"
 
@@ -16,7 +16,7 @@ benchmark-cli = ["dep:anyhow", "dep:clap", "dep:rand", "dep:toml"]
 anyhow = { version = "1", optional = true }
 base64 = "0.22"
 clap = { version = "4", features = ["derive"], optional = true }
-rand = { version = "0.8", optional = true }
+rand = { version = "0.10", optional = true }
 reqwest = { version = "0.13", default-features = false, features = [
     "blocking",
     "json",
@@ -30,4 +30,9 @@ toml = { version = "0.9", optional = true }
 [[bin]]
 name = "llm_benchmark"
 path = "src/bin/llm_benchmark.rs"
+required-features = ["benchmark-cli"]
+
+[[bin]]
+name = "llm_compat"
+path = "src/bin/llm_compat.rs"
 required-features = ["benchmark-cli"]

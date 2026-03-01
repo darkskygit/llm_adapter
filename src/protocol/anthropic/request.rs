@@ -224,13 +224,12 @@ fn normalize_image_source_to_anthropic(source: &Value) -> Value {
       if object.get("type").is_some() {
         return source.clone();
       }
-      if let (Some(media_type), Some(data)) = (
-        object.get("media_type").and_then(Value::as_str),
-        object.get("data").and_then(Value::as_str),
-      ) {
+      if let (Some(Value::String(media_type)), Some(Value::String(data))) =
+        (object.get("media_type"), object.get("data"))
+      {
         return json!({ "type": "base64", "media_type": media_type, "data": data });
       }
-      if let Some(url) = object.get("url").and_then(Value::as_str) {
+      if let Some(Value::String(url)) = object.get("url") {
         return normalize_image_url_source(url);
       }
       source.clone()
@@ -241,7 +240,7 @@ fn normalize_image_source_to_anthropic(source: &Value) -> Value {
 }
 
 fn is_anthropic_content_block(value: &Value) -> bool {
-  value.get("type").and_then(Value::as_str).is_some()
+  get_str(value, "type").is_some()
 }
 
 fn tool_result_content_to_anthropic(output: &Value) -> Value {

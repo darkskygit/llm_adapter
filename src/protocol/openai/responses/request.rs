@@ -28,22 +28,20 @@ fn parse_input_item(item: Value) -> Result<CoreMessage, ProtocolError> {
     }),
     Value::Object(object) => {
       if matches!(object.get("type"), Some(Value::String(typ)) if typ == "function_call_output") {
-        let call_id = object
-          .get("call_id")
-          .and_then(Value::as_str)
-          .ok_or(ProtocolError::MissingField("input[].call_id"))?
-          .to_string();
+        let call_id = match object.get("call_id") {
+          Some(Value::String(call_id)) => call_id.clone(),
+          _ => return Err(ProtocolError::MissingField("input[].call_id")),
+        };
         return Ok(CoreMessage {
           role: CoreRole::Tool,
           content: vec![tool_result_content(call_id, object.get("output").cloned())],
         });
       }
 
-      let role = object
-        .get("role")
-        .and_then(Value::as_str)
-        .ok_or(ProtocolError::MissingField("input[].role"))
-        .and_then(|role| parse_role(role, "role"))?;
+      let role = match object.get("role") {
+        Some(Value::String(role)) => parse_role(role, "role")?,
+        _ => return Err(ProtocolError::MissingField("input[].role")),
+      };
       let content_field = object.get("content").cloned();
       let mut content = parse_content(content_field.clone())?;
 
@@ -218,11 +216,8 @@ mod tests {
     let payload = encode(&core, true);
     assert_eq!(payload["stream"], true);
     assert_eq!(payload["max_output_tokens"], 256);
-    assert_eq!(payload["tools"][0]["function"]["name"], "doc_read");
-    assert_eq!(
-      payload["tool_choice"]["function"]["name"],
-      Value::String("doc_read".to_string())
-    );
+    assert_eq!(payload["tools"][0]["name"], "doc_read");
+    assert_eq!(payload["tool_choice"]["name"], Value::String("doc_read".to_string()));
     assert_eq!(payload["reasoning"]["effort"], "medium");
   }
 }

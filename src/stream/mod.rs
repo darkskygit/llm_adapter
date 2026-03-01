@@ -96,6 +96,78 @@ mod tests {
     out
   }
 
+  fn sample_chat_stream_with_legacy_function_call() -> String {
+    let mut out = String::new();
+    let chunk1 = json!({
+      "id": "chat_legacy",
+      "object": "chat.completion.chunk",
+      "model": "moonshot-v1",
+      "choices": [{
+        "index": 0,
+        "delta": {
+          "role": "assistant",
+          "function_call": {
+            "name": "get_weather",
+            "arguments": "{\"location\":\"Tok"
+          }
+        },
+        "finish_reason": Value::Null
+      }]
+    });
+    out.push_str("data: ");
+    out.push_str(&serde_json::to_string(&chunk1).unwrap());
+    out.push_str("\n\n");
+
+    let chunk2 = json!({
+      "id": "chat_legacy",
+      "object": "chat.completion.chunk",
+      "model": "moonshot-v1",
+      "choices": [{
+        "index": 0,
+        "delta": {
+          "function_call": {
+            "arguments": "yo\",\"unit\":\"c\"}"
+          }
+        },
+        "finish_reason": "tool_calls"
+      }]
+    });
+    out.push_str("data: ");
+    out.push_str(&serde_json::to_string(&chunk2).unwrap());
+    out.push_str("\n\n");
+    out.push_str("data: [DONE]\n\n");
+    out
+  }
+
+  fn sample_chat_stream_with_message_tool_calls() -> String {
+    let mut out = String::new();
+    let chunk = json!({
+      "id": "chat_snapshot",
+      "object": "chat.completion.chunk",
+      "model": "minimax-v1",
+      "choices": [{
+        "index": 0,
+        "message": {
+          "role": "assistant",
+          "tool_calls": [{
+            "id": "call_snapshot_1",
+            "type": "function",
+            "function": {
+              "name": "get_weather",
+              "arguments": "{\"location\":\"Tokyo\",\"unit\":\"c\"}"
+            }
+          }]
+        },
+        "finish_reason": "tool_calls"
+      }]
+    });
+    out.push_str("data: ");
+    out.push_str(&serde_json::to_string(&chunk).unwrap());
+    out.push_str("\n\n");
+    out.push_str("data: [DONE]\n\n");
+    out
+  }
+
   fn event_index(frames: &[SseFrame], name: &str) -> usize {
     frames
       .iter()
@@ -133,6 +205,32 @@ mod tests {
     ));
     assert!(parsed.iter().any(
       |event| matches!(event, StreamEvent::Citation { index, url } if *index == 1 && url == "https://affine.pro")
+    ));
+    assert!(
+      parsed
+        .iter()
+        .any(|event| matches!(event, StreamEvent::Done { finish_reason: Some(reason), .. } if reason == "tool_calls"))
+    );
+  }
+
+  #[test]
+  fn should_parse_openai_chat_stream_with_legacy_function_call() {
+    let parsed = parse_openai_chat_stream(&sample_chat_stream_with_legacy_function_call()).unwrap();
+
+    assert!(parsed.iter().any(
+      |event| matches!(event, StreamEvent::ToolCallDelta { call_id, name, .. } if call_id == "get_weather:0" && name.as_deref() == Some("get_weather"))
+    ));
+    assert!(parsed.iter().any(
+      |event| matches!(event, StreamEvent::ToolCall { call_id, name, .. } if call_id == "get_weather:0" && name == "get_weather")
+    ));
+  }
+
+  #[test]
+  fn should_parse_openai_chat_stream_with_message_tool_call_snapshot() {
+    let parsed = parse_openai_chat_stream(&sample_chat_stream_with_message_tool_calls()).unwrap();
+
+    assert!(parsed.iter().any(
+      |event| matches!(event, StreamEvent::ToolCall { call_id, name, .. } if call_id == "call_snapshot_1" && name == "get_weather")
     ));
     assert!(
       parsed

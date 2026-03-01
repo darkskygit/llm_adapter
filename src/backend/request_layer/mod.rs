@@ -8,7 +8,9 @@ mod responses;
 mod vertex;
 
 use self::{
-  anthropic::AnthropicRequestLayer, chat_completions::ChatCompletionsRequestLayer, responses::ResponsesRequestLayer,
+  anthropic::AnthropicRequestLayer,
+  chat_completions::{ChatCompletionsNoV1RequestLayer, ChatCompletionsRequestLayer},
+  responses::ResponsesRequestLayer,
   vertex::VertexRequestLayer,
 };
 
@@ -29,6 +31,7 @@ trait RequestLayerImpl {
 
 const ANTHROPIC_LAYER: AnthropicRequestLayer = AnthropicRequestLayer;
 const CHAT_COMPLETIONS_LAYER: ChatCompletionsRequestLayer = ChatCompletionsRequestLayer;
+const CHAT_COMPLETIONS_NO_V1_LAYER: ChatCompletionsNoV1RequestLayer = ChatCompletionsNoV1RequestLayer;
 const RESPONSES_LAYER: ResponsesRequestLayer = ResponsesRequestLayer;
 const VERTEX_LAYER: VertexRequestLayer = VertexRequestLayer;
 
@@ -57,6 +60,9 @@ impl BackendRequestLayer {
       (
         BackendRequestLayer::ChatCompletions,
         BackendProtocol::OpenaiChatCompletions
+      ) | (
+        BackendRequestLayer::ChatCompletionsNoV1,
+        BackendProtocol::OpenaiChatCompletions
       ) | (BackendRequestLayer::Responses, BackendProtocol::OpenaiResponses)
         | (BackendRequestLayer::Anthropic, BackendProtocol::AnthropicMessages)
         | (BackendRequestLayer::Vertex, BackendProtocol::AnthropicMessages)
@@ -77,6 +83,7 @@ impl BackendRequestLayer {
     match self {
       BackendRequestLayer::Anthropic => "anthropic",
       BackendRequestLayer::ChatCompletions => "chat_completions",
+      BackendRequestLayer::ChatCompletionsNoV1 => "chat_completions_no_v1",
       BackendRequestLayer::Responses => "responses",
       BackendRequestLayer::Vertex => "vertex",
     }
@@ -86,6 +93,7 @@ impl BackendRequestLayer {
     match self {
       BackendRequestLayer::Anthropic => &ANTHROPIC_LAYER,
       BackendRequestLayer::ChatCompletions => &CHAT_COMPLETIONS_LAYER,
+      BackendRequestLayer::ChatCompletionsNoV1 => &CHAT_COMPLETIONS_NO_V1_LAYER,
       BackendRequestLayer::Responses => &RESPONSES_LAYER,
       BackendRequestLayer::Vertex => &VERTEX_LAYER,
     }

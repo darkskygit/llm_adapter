@@ -1,6 +1,5 @@
 mod common;
 mod error;
-mod utils;
 
 pub mod anthropic;
 pub mod openai;
@@ -14,13 +13,14 @@ pub(crate) use common::{
   usage_from_responses,
 };
 pub use error::ProtocolError;
-use utils::{
-  get_cached_tokens, get_first_str, get_first_str_or, get_str, get_str_or, get_u32, get_u32_or, parse_json,
-  parse_json_ref,
-};
-pub(crate) use utils::{parse_json_string, stringify_json};
 
-use super::core::{
-  CoreContent, CoreMessage, CoreRequest, CoreResponse, CoreRole, CoreToolChoice, CoreToolChoiceMode,
-  CoreToolDefinition, CoreUsage,
+use super::{
+  core::{
+    CoreContent, CoreMessage, CoreRequest, CoreResponse, CoreRole, CoreToolChoice, CoreToolChoiceMode,
+    CoreToolDefinition, CoreUsage,
+  },
+  utils::{
+    get_cached_tokens, get_first_str, get_first_str_or, get_str, get_str_or, get_u32, get_u32_or, parse_json,
+    parse_json_ref, stringify_json,
+  },
 };

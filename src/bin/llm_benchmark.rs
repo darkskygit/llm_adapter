@@ -14,7 +14,7 @@ use llm_adapter::{
   backend::{BackendConfig, BackendProtocol, BackendRequestLayer, ReqwestHttpClient, dispatch_request},
   core::{CoreContent, CoreMessage, CoreRequest, CoreRole},
 };
-use rand::seq::SliceRandom;
+use rand::prelude::IndexedRandom;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
@@ -593,7 +593,7 @@ impl PromptManager {
       if keys.is_empty() {
         return Err(anyhow!("no prompts available"));
       }
-      let mut rng = rand::thread_rng();
+      let mut rng = rand::rng();
       let selected = keys
         .choose(&mut rng)
         .ok_or_else(|| anyhow!("failed to select random prompt"))?;

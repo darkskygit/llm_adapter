@@ -3,12 +3,19 @@ use serde_json::{Map, Value, json};
 
 use super::{
   CoreContent, CoreMessage, CoreRequest, CoreToolChoice, CoreToolChoiceMode, CoreToolDefinition, ProtocolError,
-  core_role_to_string, parse_json, parse_text_or_array_content, stringify_json,
+  core_role_to_string, get_str, parse_json, parse_text_or_array_content, stringify_json,
 };
 
 #[derive(Debug, Deserialize)]
 pub(crate) struct OpenaiTool {
-  function: OpenaiFunctionDefinition,
+  #[serde(default)]
+  function: Option<OpenaiFunctionDefinition>,
+  #[serde(default)]
+  name: Option<String>,
+  #[serde(default)]
+  description: Option<String>,
+  #[serde(default)]
+  parameters: Option<Value>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -35,10 +42,23 @@ struct OpenaiFunctionCall {
 pub(crate) fn openai_tools_to_core(tools: Vec<OpenaiTool>) -> Vec<CoreToolDefinition> {
   tools
     .into_iter()
-    .map(|tool| CoreToolDefinition {
-      name: tool.function.name,
-      description: tool.function.description,
-      parameters: tool.function.parameters,
+    .filter_map(|tool| {
+      if let Some(function) = tool.function {
+        return Some(CoreToolDefinition {
+          name: function.name,
+          description: function.description,
+          parameters: function.parameters,
+        });
+      }
+
+      let name = tool.name?;
+      Some(CoreToolDefinition {
+        name,
+        description: tool.description,
+        parameters: tool
+          .parameters
+          .unwrap_or_else(|| json!({ "type": "object", "properties": {} })),
+      })
     })
     .collect()
 }
@@ -85,6 +105,20 @@ pub(crate) fn tool_choice_from_core(choice: Option<&CoreToolChoice>) -> Option<V
   })
 }
 
+fn tool_choice_from_core_for_responses(choice: Option<&CoreToolChoice>) -> Option<Value> {
+  let choice = choice?;
+  Some(match choice {
+    CoreToolChoice::Mode(mode) => match mode {
+      CoreToolChoiceMode::Auto => Value::String("auto".to_string()),
+      CoreToolChoiceMode::None => Value::String("none".to_string()),
+      CoreToolChoiceMode::Required => Value::String("required".to_string()),
+    },
+    CoreToolChoice::Specific { name } => {
+      json!({ "type": "function", "name": name })
+    }
+  })
+}
+
 pub(crate) fn tool_definition_from_core(tool: &CoreToolDefinition) -> Value {
   json!({
     "type": "function",
@@ -93,6 +127,15 @@ pub(crate) fn tool_definition_from_core(tool: &CoreToolDefinition) -> Value {
       "description": tool.description,
       "parameters": tool.parameters,
     }
+  })
+}
+
+fn tool_definition_from_core_for_responses(tool: &CoreToolDefinition) -> Value {
+  json!({
+    "type": "function",
+    "name": tool.name,
+    "description": tool.description,
+    "parameters": tool.parameters,
   })
 }
 
@@ -310,12 +353,21 @@ pub(crate) fn encode_openai_request(
     payload.insert("temperature".to_string(), json!(temperature));
   }
   if !request.tools.is_empty() {
-    payload.insert(
-      "tools".to_string(),
-      Value::Array(request.tools.iter().map(tool_definition_from_core).collect()),
-    );
+    let tools = match flavor {
+      OpenaiRequestFlavor::ChatCompletions => request.tools.iter().map(tool_definition_from_core).collect(),
+      OpenaiRequestFlavor::Responses => request
+        .tools
+        .iter()
+        .map(tool_definition_from_core_for_responses)
+        .collect(),
+    };
+    payload.insert("tools".to_string(), Value::Array(tools));
   }
-  if let Some(tool_choice) = tool_choice_from_core(request.tool_choice.as_ref()) {
+  let tool_choice = match flavor {
+    OpenaiRequestFlavor::ChatCompletions => tool_choice_from_core(request.tool_choice.as_ref()),
+    OpenaiRequestFlavor::Responses => tool_choice_from_core_for_responses(request.tool_choice.as_ref()),
+  };
+  if let Some(tool_choice) = tool_choice {
     payload.insert("tool_choice".to_string(), tool_choice);
   }
   if let Some(include) = &request.include {
@@ -326,7 +378,7 @@ pub(crate) fn encode_openai_request(
   }
   if let Some(reasoning) = &request.reasoning {
     if flavor == OpenaiRequestFlavor::ChatCompletions {
-      if let Some(effort) = reasoning.get("effort").and_then(Value::as_str) {
+      if let Some(effort) = get_str(reasoning, "effort") {
         payload.insert("reasoning_effort".to_string(), Value::String(effort.to_string()));
       } else {
         payload.insert("reasoning".to_string(), reasoning.clone());

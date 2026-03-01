@@ -5,7 +5,7 @@ use serde_json::{Value, json};
 use super::{
   super::{
     core::{CoreUsage, StreamEvent},
-    protocol::stringify_json,
+    utils::{get_str, stringify_json},
   },
   SseFrame,
   sse::encode_sse_frame,
@@ -982,13 +982,10 @@ fn tool_result_content_to_anthropic(output: &Value) -> Value {
   match output {
     Value::String(_) => output.clone(),
     Value::Array(items) if items.iter().all(is_anthropic_content_block) => output.clone(),
-    _ => Value::Array(vec![json!({
-      "type": "text",
-      "text": stringify_json(output),
-    })]),
+    _ => Value::Array(vec![json!({ "type": "text", "text": stringify_json(output) })]),
   }
 }
 
 fn is_anthropic_content_block(value: &Value) -> bool {
-  value.get("type").and_then(Value::as_str).is_some()
+  get_str(value, "type").is_some()
 }

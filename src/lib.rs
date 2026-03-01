@@ -7,6 +7,7 @@ pub mod protocol;
 /// Public fallback router helpers for external multi-provider orchestration.
 pub mod router;
 pub mod stream;
+pub(crate) mod utils;
 
 #[cfg(test)]
 pub(crate) mod test_support;

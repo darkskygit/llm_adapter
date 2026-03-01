@@ -34,7 +34,7 @@ pub fn decode(body: &Value) -> Result<CoreResponse, ProtocolError> {
   let mut content = Vec::new();
   if let Some(output_items) = body.get("output").and_then(Value::as_array) {
     for item in output_items {
-      let item_type = item.get("type").and_then(Value::as_str).unwrap_or_default();
+      let item_type = get_str_or(item, "type", "");
       match item_type {
         "function_call" => {
           let call_id = get_first_str_or(item, &["call_id", "id"], "call_0").to_string();
@@ -66,8 +66,7 @@ pub fn decode(body: &Value) -> Result<CoreResponse, ProtocolError> {
             .get("summary")
             .and_then(Value::as_array)
             .and_then(|summary| summary.first())
-            .and_then(|first| first.get("text"))
-            .and_then(Value::as_str)
+            .and_then(|first| get_str(first, "text"))
           {
             content.push(CoreContent::Reasoning {
               text: text.to_string(),
@@ -79,7 +78,7 @@ pub fn decode(body: &Value) -> Result<CoreResponse, ProtocolError> {
           role = parse_role_lossy(get_str_or(item, "role", "assistant"));
           if let Some(contents) = item.get("content").and_then(Value::as_array) {
             for block in contents {
-              if block.get("type").and_then(Value::as_str) == Some("output_text") {
+              if get_str(block, "type") == Some("output_text") {
                 if let Some(text) = get_str(block, "text") {
                   content.push(CoreContent::Text { text: text.to_string() });
                 }
@@ -103,10 +102,7 @@ pub fn decode(body: &Value) -> Result<CoreResponse, ProtocolError> {
   let message = CoreMessage { role, content };
   let completion_estimate = message_token_estimate(&message);
   let usage = usage_from_responses(body.get("usage"), 0, completion_estimate);
-  let finish_reason = super::map_responses_finish_reason(
-    body.get("status").and_then(Value::as_str),
-    get_str(body, "finish_reason"),
-  );
+  let finish_reason = super::map_responses_finish_reason(get_str(body, "status"), get_str(body, "finish_reason"));
 
   Ok(CoreResponse {
     id,

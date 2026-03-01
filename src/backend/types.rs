@@ -18,6 +18,7 @@ pub enum BackendProtocol {
 pub enum BackendRequestLayer {
   Anthropic,
   ChatCompletions,
+  ChatCompletionsNoV1,
   Responses,
   Vertex,
 }
