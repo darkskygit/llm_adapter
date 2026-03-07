@@ -306,12 +306,25 @@ impl Default for CompatibilityConfig {
     providers.insert(
       "gemini".to_string(),
       ProviderConfig {
-        base_url: "https://generativelanguage.googleapis.com/v1beta/openai".to_string(),
+        base_url: "https://generativelanguage.googleapis.com/v1beta".to_string(),
         model: "gemini-2.5-flash".to_string(),
         auth_token_env: Some("GEMINI_API_KEY".to_string()),
         requires_auth: true,
-        protocol: BackendProtocol::OpenaiChatCompletions,
-        request_layer: Some(BackendRequestLayer::ChatCompletions),
+        protocol: BackendProtocol::GeminiGenerateContent,
+        request_layer: Some(BackendRequestLayer::GeminiApi),
+        ..ProviderConfig::default()
+      },
+    );
+    providers.insert(
+      "gemini_vertex".to_string(),
+      ProviderConfig {
+        enabled: false,
+        base_url: "https://us-central1-aiplatform.googleapis.com/v1/projects/your-project/locations/us-central1/publishers/google".to_string(),
+        model: "gemini-2.5-flash".to_string(),
+        auth_token_env: Some("VERTEX_TOKEN".to_string()),
+        requires_auth: true,
+        protocol: BackendProtocol::GeminiGenerateContent,
+        request_layer: Some(BackendRequestLayer::GeminiVertex),
         ..ProviderConfig::default()
       },
     );

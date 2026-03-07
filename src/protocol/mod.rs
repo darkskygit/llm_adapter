@@ -2,6 +2,7 @@ mod common;
 mod error;
 
 pub mod anthropic;
+pub mod gemini;
 pub mod openai;
 
 #[cfg(test)]
@@ -9,8 +10,8 @@ mod tests;
 
 use common::{core_role_to_string, message_token_estimate, parse_role, parse_role_lossy, parse_text_or_array_content};
 pub(crate) use common::{
-  map_anthropic_finish_reason, map_responses_finish_reason, usage_from_anthropic, usage_from_openai,
-  usage_from_responses,
+  map_anthropic_finish_reason, map_gemini_finish_reason, map_responses_finish_reason, usage_from_anthropic,
+  usage_from_gemini, usage_from_openai, usage_from_responses,
 };
 pub use error::ProtocolError;
 

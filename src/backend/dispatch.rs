@@ -3,10 +3,10 @@ use serde_json::Value;
 use super::{
   super::{
     core::{CoreRequest, CoreResponse, StreamEvent},
-    protocol::{ProtocolError, anthropic, openai},
+    protocol::{ProtocolError, anthropic, gemini, openai},
     stream::{
-      AnthropicStreamParser, IncrementalSseEncoder, OpenaiChatStreamParser, OpenaiResponsesStreamParser, SseFrame,
-      SseFrameDecoder, StreamEncodingTarget, StreamParseError, encode_sse_frame,
+      AnthropicStreamParser, GeminiStreamParser, IncrementalSseEncoder, OpenaiChatStreamParser,
+      OpenaiResponsesStreamParser, SseFrame, SseFrameDecoder, StreamEncodingTarget, StreamParseError, encode_sse_frame,
     },
   },
   BackendConfig, BackendError, BackendHttpClient, BackendProtocol, HttpRequest,
@@ -19,6 +19,7 @@ impl BackendProtocol {
       BackendProtocol::OpenaiChatCompletions => openai::chat::request::encode(request, stream),
       BackendProtocol::OpenaiResponses => openai::responses::request::encode(request, stream),
       BackendProtocol::AnthropicMessages => anthropic::request::encode(request, stream),
+      BackendProtocol::GeminiGenerateContent => gemini::request::encode(request, stream),
     }
   }
 
@@ -27,6 +28,7 @@ impl BackendProtocol {
       BackendProtocol::OpenaiChatCompletions => openai::chat::response::decode(body),
       BackendProtocol::OpenaiResponses => openai::responses::response::decode(body),
       BackendProtocol::AnthropicMessages => anthropic::response::decode(body),
+      BackendProtocol::GeminiGenerateContent => gemini::response::decode(body),
     }
   }
 }
@@ -35,6 +37,7 @@ enum IncrementalStreamParser {
   OpenaiChat(OpenaiChatStreamParser),
   OpenaiResponses(OpenaiResponsesStreamParser),
   Anthropic(AnthropicStreamParser),
+  Gemini(GeminiStreamParser),
 }
 
 impl IncrementalStreamParser {
@@ -43,6 +46,7 @@ impl IncrementalStreamParser {
       BackendProtocol::OpenaiChatCompletions => Self::OpenaiChat(OpenaiChatStreamParser::default()),
       BackendProtocol::OpenaiResponses => Self::OpenaiResponses(OpenaiResponsesStreamParser::default()),
       BackendProtocol::AnthropicMessages => Self::Anthropic(AnthropicStreamParser::default()),
+      BackendProtocol::GeminiGenerateContent => Self::Gemini(GeminiStreamParser::default()),
     }
   }
 
@@ -51,6 +55,7 @@ impl IncrementalStreamParser {
       IncrementalStreamParser::OpenaiChat(parser) => parser.push_frame(frame),
       IncrementalStreamParser::OpenaiResponses(parser) => parser.push_frame(frame),
       IncrementalStreamParser::Anthropic(parser) => parser.push_frame(frame),
+      IncrementalStreamParser::Gemini(parser) => parser.push_frame(frame),
     }
   }
 
@@ -59,6 +64,7 @@ impl IncrementalStreamParser {
       IncrementalStreamParser::OpenaiChat(parser) => parser.finish(),
       IncrementalStreamParser::OpenaiResponses(parser) => parser.finish(),
       IncrementalStreamParser::Anthropic(parser) => parser.finish(),
+      IncrementalStreamParser::Gemini(parser) => parser.finish(),
     }
   }
 }

@@ -65,6 +65,58 @@ fn should_dispatch_openai_chat_request() {
 }
 
 #[test]
+fn should_dispatch_gemini_api_request() {
+  let client = MockHttpClient::with_json_responses(vec![MockHttpResponse::Json(Ok(HttpResponse {
+    status: 200,
+    body: json!({
+      "responseId": "gem_resp_1",
+      "modelVersion": "gemini-2.5-flash",
+      "candidates": [{
+        "content": {
+          "role": "model",
+          "parts": [{ "text": "Hi!" }]
+        },
+        "finishReason": "FINISH_REASON_STOP"
+      }],
+      "usageMetadata": {
+        "promptTokenCount": 12,
+        "candidatesTokenCount": 4,
+        "totalTokenCount": 16
+      }
+    }),
+  }))]);
+
+  let mut request = sample_request();
+  request.model = "gemini-2.5-flash".to_string();
+
+  let mut config = sample_backend_config_with_header(false);
+  config.base_url = "https://generativelanguage.googleapis.com/v1beta".to_string();
+  config.request_layer = Some(BackendRequestLayer::GeminiApi);
+
+  let response = dispatch_request(&client, &config, BackendProtocol::GeminiGenerateContent, &request).unwrap();
+  assert_eq!(response.id, "gem_resp_1");
+
+  let requests = client.requests();
+  assert_eq!(requests.len(), 1);
+  assert_eq!(
+    requests[0].url,
+    "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent"
+  );
+  assert!(requests[0].body.get("model").is_none());
+  assert!(requests[0].body.get("stream").is_none());
+  assert_eq!(requests[0].body["generationConfig"]["maxOutputTokens"], 128);
+  assert_eq!(
+    requests[0].headers,
+    vec![
+      ("accept".to_string(), "application/json".to_string()),
+      ("content-type".to_string(), "application/json".to_string()),
+      ("x-goog-api-key".to_string(), "token-1".to_string()),
+      ("x-test-header".to_string(), "1".to_string()),
+    ]
+  );
+}
+
+#[test]
 fn should_dispatch_openai_responses_stream() {
   let client = MockHttpClient::with_stream_responses(vec![MockHttpResponse::Stream(Ok(HttpStreamResponse {
     status: 200,
@@ -339,7 +391,7 @@ fn should_dispatch_vertex_anthropic_request() {
   let mut config = sample_backend_config_with_header(false);
   config.base_url =
     "https://us-east5-aiplatform.googleapis.com/v1/projects/p1/locations/us-east5/publishers/anthropic".to_string();
-  config.request_layer = Some(BackendRequestLayer::Vertex);
+  config.request_layer = Some(BackendRequestLayer::VertexAnthropic);
 
   let mut request = sample_request();
   request.model = "claude-sonnet-4-5@20250929".to_string();
@@ -405,7 +457,7 @@ fn should_dispatch_vertex_anthropic_stream() {
   let mut config = sample_backend_config_with_header(false);
   config.base_url =
     "https://us-east5-aiplatform.googleapis.com/v1/projects/p1/locations/us-east5/publishers/anthropic".to_string();
-  config.request_layer = Some(BackendRequestLayer::Vertex);
+  config.request_layer = Some(BackendRequestLayer::VertexAnthropic);
 
   let mut request = sample_request();
   request.model = "claude-sonnet-4-5@20250929".to_string();
@@ -420,6 +472,94 @@ fn should_dispatch_vertex_anthropic_stream() {
   );
   assert_eq!(requests[0].body["stream"], Value::Bool(true));
   assert_eq!(requests[0].body["anthropic_version"], "vertex-2023-10-16");
+}
+
+#[test]
+fn should_dispatch_gemini_vertex_stream() {
+  let body = [
+    format!(
+      "data: {}\n\n",
+      serde_json::to_string(&json!({
+        "responseId": "gem_stream_1",
+        "modelVersion": "gemini-2.5-flash-001",
+        "candidates": [{
+          "content": {
+            "parts": [{ "text": "Hel" }]
+          }
+        }]
+      }))
+      .unwrap()
+    ),
+    format!(
+      "data: {}\n\n",
+      serde_json::to_string(&json!({
+        "responseId": "gem_stream_1",
+        "modelVersion": "gemini-2.5-flash-001",
+        "candidates": [{
+          "content": {
+            "parts": [
+              { "text": "Hello" },
+              { "functionCall": { "name": "doc_read", "args": { "docId": "a1" } } }
+            ]
+          },
+          "finishReason": "FINISH_REASON_STOP"
+        }],
+        "usageMetadata": {
+          "promptTokenCount": 8,
+          "candidatesTokenCount": 2,
+          "totalTokenCount": 10
+        }
+      }))
+      .unwrap()
+    ),
+    "data: [DONE]\n\n".to_string(),
+  ]
+  .concat();
+
+  let client = MockHttpClient::with_stream_responses(vec![MockHttpResponse::Stream(Ok(HttpStreamResponse {
+    status: 200,
+    body,
+  }))]);
+
+  let mut config = sample_backend_config_with_header(false);
+  config.base_url =
+    "https://us-central1-aiplatform.googleapis.com/v1/projects/p1/locations/us-central1/publishers/google".to_string();
+  config.request_layer = Some(BackendRequestLayer::GeminiVertex);
+
+  let mut request = sample_request();
+  request.model = "gemini-2.5-flash".to_string();
+
+  let events = collect_stream_events(&client, &config, BackendProtocol::GeminiGenerateContent, &request).unwrap();
+  assert!(
+    events
+      .iter()
+      .any(|event| matches!(event, StreamEvent::TextDelta { .. }))
+  );
+  assert!(events.iter().any(
+    |event| matches!(event, StreamEvent::ToolCall { call_id, name, .. } if call_id == "doc_read:1" && name == "doc_read")
+  ));
+  assert!(
+    events
+      .iter()
+      .any(|event| matches!(event, StreamEvent::Done { finish_reason: Some(reason), .. } if reason == "tool_calls"))
+  );
+
+  let requests = client.requests();
+  assert_eq!(
+    requests[0].url,
+    "https://us-central1-aiplatform.googleapis.com/v1/projects/p1/locations/us-central1/publishers/google/models/gemini-2.5-flash:streamGenerateContent?alt=sse"
+  );
+  assert!(requests[0].body.get("model").is_none());
+  assert!(requests[0].body.get("stream").is_none());
+  assert_eq!(
+    requests[0].headers,
+    vec![
+      ("accept".to_string(), "text/event-stream".to_string()),
+      ("authorization".to_string(), "Bearer token-1".to_string()),
+      ("content-type".to_string(), "application/json".to_string()),
+      ("x-test-header".to_string(), "1".to_string()),
+    ]
+  );
 }
 
 #[test]

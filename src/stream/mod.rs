@@ -9,8 +9,8 @@ pub use encode::{
   StreamEncodingTarget, encode_anthropic_stream, encode_openai_chat_stream, encode_openai_responses_stream,
 };
 pub use parse::{
-  AnthropicStreamParser, OpenaiChatStreamParser, OpenaiResponsesStreamParser, parse_anthropic_stream,
-  parse_openai_chat_stream, parse_openai_responses_stream,
+  AnthropicStreamParser, GeminiStreamParser, OpenaiChatStreamParser, OpenaiResponsesStreamParser,
+  parse_anthropic_stream, parse_gemini_stream, parse_openai_chat_stream, parse_openai_responses_stream,
 };
 pub use sse::{SseFrameDecoder, encode_sse_frame, parse_sse_frames};
 
@@ -168,6 +168,52 @@ mod tests {
     out
   }
 
+  fn sample_gemini_stream() -> String {
+    let mut out = String::new();
+    let chunk1 = json!({
+      "responseId": "gem_stream_1",
+      "modelVersion": "gemini-2.5-flash",
+      "candidates": [{
+        "content": {
+          "parts": [
+            { "text": "Hel" }
+          ]
+        }
+      }]
+    });
+    out.push_str("data: ");
+    out.push_str(&serde_json::to_string(&chunk1).unwrap());
+    out.push_str("\n\n");
+
+    let chunk2 = json!({
+      "responseId": "gem_stream_1",
+      "modelVersion": "gemini-2.5-flash",
+      "candidates": [{
+        "content": {
+          "parts": [
+            { "text": "Hello" },
+            { "text": "draft", "thought": true },
+            { "functionCall": { "name": "doc_read", "args": { "docId": "a1" } } }
+          ]
+        },
+        "finishReason": "FINISH_REASON_STOP",
+        "citationMetadata": {
+          "citationSources": [{ "uri": "https://example.com/source" }]
+        }
+      }],
+      "usageMetadata": {
+        "promptTokenCount": 8,
+        "candidatesTokenCount": 2,
+        "totalTokenCount": 10
+      }
+    });
+    out.push_str("data: ");
+    out.push_str(&serde_json::to_string(&chunk2).unwrap());
+    out.push_str("\n\n");
+    out.push_str("data: [DONE]\n\n");
+    out
+  }
+
   fn event_index(frames: &[SseFrame], name: &str) -> usize {
     frames
       .iter()
@@ -270,6 +316,41 @@ mod tests {
       parsed
         .iter()
         .any(|event| matches!(event, StreamEvent::TextDelta { text } if text == "你好世界"))
+    );
+  }
+
+  #[test]
+  fn should_parse_gemini_stream_with_reasoning_tool_calls_and_citations() {
+    let parsed = parse_gemini_stream(&sample_gemini_stream()).unwrap();
+
+    assert!(
+      parsed
+        .iter()
+        .any(|event| matches!(event, StreamEvent::TextDelta { text } if text == "Hel"))
+    );
+    assert!(
+      parsed
+        .iter()
+        .any(|event| matches!(event, StreamEvent::TextDelta { text } if text == "lo"))
+    );
+    assert!(
+      parsed
+        .iter()
+        .any(|event| matches!(event, StreamEvent::ReasoningDelta { text } if text == "draft"))
+    );
+    assert!(parsed.iter().any(
+      |event| matches!(event, StreamEvent::ToolCallDelta { call_id, name, .. } if call_id == "doc_read:2" && name.as_deref() == Some("doc_read"))
+    ));
+    assert!(parsed.iter().any(
+      |event| matches!(event, StreamEvent::ToolCall { call_id, name, .. } if call_id == "doc_read:2" && name == "doc_read")
+    ));
+    assert!(parsed.iter().any(
+      |event| matches!(event, StreamEvent::Citation { index, url } if *index == 1 && url == "https://example.com/source")
+    ));
+    assert!(
+      parsed
+        .iter()
+        .any(|event| matches!(event, StreamEvent::Done { finish_reason: Some(reason), .. } if reason == "tool_calls"))
     );
   }
 

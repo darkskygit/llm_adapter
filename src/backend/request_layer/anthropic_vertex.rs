@@ -3,9 +3,9 @@ use serde_json::Value;
 use super::{super::BackendConfig, RequestLayerImpl, build_bearer_headers};
 
 #[derive(Debug, Clone, Copy)]
-pub(super) struct VertexRequestLayer;
+pub(super) struct VertexAnthropicRequestLayer;
 
-impl RequestLayerImpl for VertexRequestLayer {
+impl RequestLayerImpl for VertexAnthropicRequestLayer {
   fn build_url(&self, base_url: &str, model: &str, stream: bool) -> String {
     build_vertex_url(base_url, model, stream)
   }

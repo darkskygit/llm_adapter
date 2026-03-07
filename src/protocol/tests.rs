@@ -1,6 +1,6 @@
 use serde_json::{Value, json};
 
-use super::{ProtocolError, anthropic, openai};
+use super::{ProtocolError, anthropic, gemini, openai};
 use crate::{core::CoreResponse, test_support::sample_response_with_reasoning_tool_call};
 
 #[test]
@@ -108,6 +108,38 @@ fn decode_should_support_string_number_and_call_id_fallback_across_providers() {
       expected_finish_reason: Some("length"),
       expected_tool_result_output: Some(json!({ "ok": true })),
     },
+    Case {
+      name: "gemini",
+      decode: gemini::response::decode,
+      input: json!({
+        "responseId": "resp_4",
+        "modelVersion": "gemini-2.5-flash",
+        "candidates": [{
+          "content": {
+            "role": "model",
+            "parts": [
+              { "text": "drafting plan", "thought": true, "thoughtSignature": "sig_1" },
+              { "functionCall": { "name": "doc_read", "args": { "docId": "a4" } } },
+              { "functionResponse": { "name": "doc_read", "response": { "output": { "ok": true } } } }
+            ]
+          },
+          "finishReason": "FINISH_REASON_MAX_TOKENS"
+        }],
+        "usageMetadata": {
+          "promptTokenCount": "6",
+          "candidatesTokenCount": "3",
+          "totalTokenCount": "9",
+          "cachedContentTokenCount": "1"
+        }
+      }),
+      expected_prompt_tokens: 6,
+      expected_completion_tokens: 3,
+      expected_total_tokens: 9,
+      expected_cached_tokens: Some(1),
+      expected_call_id: "doc_read:1",
+      expected_finish_reason: Some("length"),
+      expected_tool_result_output: Some(json!({ "ok": true })),
+    },
   ];
 
   for case in cases {
@@ -189,6 +221,12 @@ fn encode_should_preserve_tool_call_reasoning_and_usage_across_providers() {
     assert_eq!(payload["content"][0]["type"], "thinking");
   }
 
+  fn verify_gemini(payload: &Value) {
+    assert_eq!(payload["candidates"][0]["finishReason"], "FINISH_REASON_STOP");
+    assert_eq!(payload["usageMetadata"]["cachedContentTokenCount"], 12);
+    assert_eq!(payload["candidates"][0]["content"]["parts"][0]["thought"], true);
+  }
+
   let cases = [
     Case {
       encode: openai::chat::response::encode,
@@ -201,6 +239,10 @@ fn encode_should_preserve_tool_call_reasoning_and_usage_across_providers() {
     Case {
       encode: anthropic::response::encode,
       verify: verify_anthropic,
+    },
+    Case {
+      encode: gemini::response::encode,
+      verify: verify_gemini,
     },
   ];
 

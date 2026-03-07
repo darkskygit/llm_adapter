@@ -5,7 +5,7 @@ A small Rust library for adapting multiple LLM provider APIs into one internal r
 `llm_adapter` gives you:
 
 - A provider-neutral core model (`CoreRequest`, `CoreResponse`, `StreamEvent`)
-- Protocol codecs for OpenAI Chat Completions, OpenAI Responses, and Anthropic Messages
+- Protocol codecs for OpenAI Chat Completions, OpenAI Responses, Anthropic Messages, and Gemini GenerateContent
 - Streaming SSE parsing and cross-protocol stream rewriting helpers
 - Optional middleware and fallback routing building blocks for host applications
 
@@ -15,10 +15,19 @@ Early-stage crate (`0.1.0`) focused on API shape stability and test coverage.
 
 ## Supported Backends
 
+Protocol codecs for:
+
 - OpenAI Chat Completions
 - OpenAI Responses
+- Gemini GenerateContent
 - Anthropic Messages
-- Anthropic-on-Vertex request surface (`BackendRequestLayer::Vertex`)
+
+Endpoint shapes for:
+
+- OpenAI Chat Completions (`BackendRequestLayer::ChatCompletions`/`BackendRequestLayer::ChatCompletionsNoV1`)
+- OpenAI Responses (`BackendRequestLayer::Responses`)
+- Google Gemini (`BackendRequestLayer::GeminiApi`/`BackendRequestLayer::GeminiVertex`)
+- Anthropic (`BackendRequestLayer::Anthropic`/`BackendRequestLayer::VertexAnthropic`)
 
 ## Add To Your Project
 

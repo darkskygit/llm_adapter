@@ -11,6 +11,7 @@ pub enum BackendProtocol {
   OpenaiChatCompletions,
   OpenaiResponses,
   AnthropicMessages,
+  GeminiGenerateContent,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -19,8 +20,10 @@ pub enum BackendRequestLayer {
   Anthropic,
   ChatCompletions,
   ChatCompletionsNoV1,
+  GeminiApi,
+  GeminiVertex,
   Responses,
-  Vertex,
+  VertexAnthropic,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

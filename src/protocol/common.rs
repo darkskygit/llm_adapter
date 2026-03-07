@@ -221,3 +221,37 @@ pub(crate) fn usage_from_anthropic(usage: Option<&Value>, prompt_estimate: u32, 
     },
   }
 }
+
+pub(crate) fn map_gemini_finish_reason(reason: &str) -> String {
+  match reason {
+    "FINISH_REASON_MAX_TOKENS" => "length".to_string(),
+    "FINISH_REASON_STOP" | "STOP" | "MAX_TOKENS" => {
+      if reason == "MAX_TOKENS" {
+        "length".to_string()
+      } else {
+        "stop".to_string()
+      }
+    }
+    "FINISH_REASON_UNSPECIFIED" | "FINISH_REASON_OTHER" => "stop".to_string(),
+    "FINISH_REASON_MALFORMED_FUNCTION_CALL" => "tool_calls".to_string(),
+    other => other
+      .strip_prefix("FINISH_REASON_")
+      .unwrap_or(other)
+      .to_ascii_lowercase(),
+  }
+}
+
+pub(crate) fn usage_from_gemini(usage: Option<&Value>, prompt_estimate: u32, completion_estimate: u32) -> CoreUsage {
+  let usage = usage.unwrap_or(&Value::Null);
+  let prompt_tokens = get_u32_or(usage, "promptTokenCount", prompt_estimate);
+  let completion_tokens = get_u32_or(usage, "candidatesTokenCount", completion_estimate);
+  let total_tokens = get_u32_or(usage, "totalTokenCount", prompt_tokens + completion_tokens);
+  let cached_tokens = get_u32_or(usage, "cachedContentTokenCount", 0);
+
+  CoreUsage {
+    prompt_tokens,
+    completion_tokens,
+    total_tokens,
+    cached_tokens: (cached_tokens > 0).then_some(cached_tokens),
+  }
+}
