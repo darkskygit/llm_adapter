@@ -1,28 +1,10 @@
-use serde_json::{Map, Value, json};
+use serde_json::{Value, json};
 
 use super::{
-  CoreContent, CoreMessage, CoreResponse, CoreRole, CoreUsage, ProtocolError, get_first_str, get_str,
-  map_gemini_finish_reason, message_token_estimate, usage_from_gemini,
+  CoreContent, CoreMessage, CoreResponse, CoreRole, ProtocolError, attachment_source,
+  common::{attachment_source_to_part, parse_parts, tool_result_response, usage_to_gemini_json},
+  get_first_str, get_str, map_gemini_finish_reason, message_token_estimate, usage_from_gemini,
 };
-
-fn get_value<'a>(value: &'a Value, keys: &[&str]) -> Option<&'a Value> {
-  keys.iter().find_map(|key| value.get(*key))
-}
-
-fn get_string<'a>(value: &'a Value, keys: &[&str]) -> Option<&'a str> {
-  get_value(value, keys).and_then(Value::as_str)
-}
-
-fn parse_function_response_output(value: &Value) -> (Value, Option<bool>) {
-  let Some(object) = value.as_object() else {
-    return (value.clone(), None);
-  };
-
-  match (object.get("output"), object.get("is_error").and_then(Value::as_bool)) {
-    (Some(output), is_error) => (output.clone(), is_error),
-    (None, is_error) => (Value::Object(object.clone()), is_error),
-  }
-}
 
 fn parse_candidate_message(candidate: &Value) -> CoreMessage {
   let content = candidate.get("content").unwrap_or(&Value::Null);
@@ -32,100 +14,14 @@ fn parse_candidate_message(candidate: &Value) -> CoreMessage {
     _ => CoreRole::Assistant,
   };
 
-  let mut parts = Vec::new();
-  let mut call_ids_by_name = std::collections::HashMap::new();
-  if let Some(items) = content.get("parts").and_then(Value::as_array) {
-    for (index, item) in items.iter().enumerate() {
-      if let Some(text) = get_string(item, &["text"]) {
-        if item.get("thought").and_then(Value::as_bool).unwrap_or(false) {
-          parts.push(CoreContent::Reasoning {
-            text: text.to_string(),
-            signature: get_string(item, &["thoughtSignature", "thought_signature"]).map(ToString::to_string),
-          });
-        } else {
-          parts.push(CoreContent::Text { text: text.to_string() });
-        }
-        continue;
-      }
-
-      if let Some(function_call) = get_value(item, &["functionCall", "function_call"]) {
-        let name = get_string(function_call, &["name"]).unwrap_or_default().to_string();
-        parts.push(CoreContent::ToolCall {
-          call_id: get_string(function_call, &["id", "callId", "call_id"])
-            .map(ToString::to_string)
-            .unwrap_or_else(|| {
-              if name.is_empty() {
-                format!("call_{index}")
-              } else {
-                format!("{name}:{index}")
-              }
-            }),
-          name,
-          arguments: function_call
-            .get("args")
-            .cloned()
-            .unwrap_or_else(|| Value::Object(Map::new())),
-          thought: None,
-        });
-        if let Some(CoreContent::ToolCall { call_id, name, .. }) = parts.last() {
-          call_ids_by_name.insert(name.clone(), call_id.clone());
-        }
-        continue;
-      }
-
-      if let Some(function_response) = get_value(item, &["functionResponse", "function_response"]) {
-        let name = get_string(function_response, &["name"]).unwrap_or("call");
-        let raw_response = function_response
-          .get("response")
-          .cloned()
-          .unwrap_or_else(|| Value::Object(Map::new()));
-        let (output, is_error) = parse_function_response_output(&raw_response);
-        parts.push(CoreContent::ToolResult {
-          call_id: get_string(&raw_response, &["call_id", "callId"])
-            .map(ToString::to_string)
-            .or_else(|| call_ids_by_name.get(name).cloned())
-            .unwrap_or_else(|| format!("{name}:{index}")),
-          output,
-          is_error,
-        });
-        continue;
-      }
-
-      if let Some(inline_data) = get_value(item, &["inlineData", "inline_data"]) {
-        parts.push(CoreContent::Image {
-          source: json!({
-            "type": "base64",
-            "media_type": get_string(inline_data, &["mimeType", "mime_type"]).unwrap_or("application/octet-stream"),
-            "data": get_string(inline_data, &["data"]).unwrap_or_default(),
-          }),
-        });
-        continue;
-      }
-
-      if let Some(file_data) = get_value(item, &["fileData", "file_data"]) {
-        parts.push(CoreContent::Image {
-          source: json!({
-            "url": get_string(file_data, &["fileUri", "file_uri"]).unwrap_or_default(),
-            "media_type": get_string(file_data, &["mimeType", "mime_type"]).unwrap_or("application/octet-stream"),
-          }),
-        });
-      }
-    }
+  CoreMessage {
+    role,
+    content: content
+      .get("parts")
+      .and_then(Value::as_array)
+      .map(|parts| parse_parts(parts))
+      .unwrap_or_default(),
   }
-
-  CoreMessage { role, content: parts }
-}
-
-fn usage_to_gemini_json(usage: &CoreUsage) -> Value {
-  let mut payload = Map::from_iter([
-    ("promptTokenCount".to_string(), json!(usage.prompt_tokens)),
-    ("candidatesTokenCount".to_string(), json!(usage.completion_tokens)),
-    ("totalTokenCount".to_string(), json!(usage.total_tokens)),
-  ]);
-  if let Some(cached_tokens) = usage.cached_tokens {
-    payload.insert("cachedContentTokenCount".to_string(), json!(cached_tokens));
-  }
-  Value::Object(payload)
 }
 
 fn core_content_to_part(content: &CoreContent) -> Value {
@@ -143,16 +39,7 @@ fn core_content_to_part(content: &CoreContent) -> Value {
       }
     }),
     CoreContent::ToolResult { output, is_error, .. } => {
-      let response = match (output, is_error) {
-        (Value::Object(object), None) => Value::Object(object.clone()),
-        _ => {
-          let mut response = Map::from_iter([("output".to_string(), output.clone())]);
-          if let Some(is_error) = is_error {
-            response.insert("is_error".to_string(), Value::Bool(*is_error));
-          }
-          Value::Object(response)
-        }
-      };
+      let response = tool_result_response(output, *is_error);
       json!({
         "functionResponse": {
           "name": "tool_result",
@@ -160,22 +47,11 @@ fn core_content_to_part(content: &CoreContent) -> Value {
         }
       })
     }
-    CoreContent::Image { source } => {
-      if let Some(url) = get_str(source, "url") {
-        json!({
-          "fileData": {
-            "fileUri": url,
-            "mimeType": get_str(source, "media_type").unwrap_or("application/octet-stream"),
-          }
-        })
-      } else {
-        json!({
-          "inlineData": {
-            "mimeType": get_str(source, "media_type").unwrap_or("application/octet-stream"),
-            "data": get_str(source, "data").unwrap_or_default(),
-          }
-        })
-      }
+    CoreContent::Image { .. } | CoreContent::Audio { .. } | CoreContent::File { .. } => {
+      let Some((source, _)) = attachment_source(content) else {
+        return Value::Null;
+      };
+      attachment_source_to_part(source)
     }
   }
 }
@@ -256,6 +132,7 @@ mod tests {
   use serde_json::json;
 
   use super::*;
+  use crate::core::CoreUsage;
 
   #[test]
   fn decode_should_cover_tool_calls_reasoning_and_usage() {
@@ -320,6 +197,82 @@ mod tests {
     assert_eq!(
       payload["candidates"][0]["content"]["parts"][0]["functionCall"]["name"],
       "doc_read"
+    );
+  }
+
+  #[test]
+  fn decode_should_preserve_audio_and_file_parts() {
+    let core = decode(&json!({
+      "responseId": "resp_3",
+      "modelVersion": "gemini-2.5-flash",
+      "candidates": [{
+        "content": {
+          "role": "model",
+          "parts": [
+            {
+              "fileData": {
+                "mimeType": "application/pdf",
+                "fileUri": "https://example.com/spec.pdf"
+              }
+            },
+            {
+              "inlineData": {
+                "mimeType": "audio/wav",
+                "data": "Zm9v"
+              }
+            }
+          ]
+        }
+      }]
+    }))
+    .unwrap();
+
+    assert!(matches!(
+      &core.message.content[0],
+      CoreContent::File { source } if source["url"] == "https://example.com/spec.pdf"
+    ));
+    assert!(matches!(
+      &core.message.content[1],
+      CoreContent::Audio { source } if source["media_type"] == "audio/wav" && source["data"] == "Zm9v"
+    ));
+  }
+
+  #[test]
+  fn encode_should_emit_file_and_audio_parts() {
+    let response = CoreResponse {
+      id: "resp_4".to_string(),
+      model: "gemini-2.5-flash".to_string(),
+      message: CoreMessage {
+        role: CoreRole::Assistant,
+        content: vec![
+          CoreContent::File {
+            source: json!({
+              "url": "https://example.com/spec.pdf",
+              "media_type": "application/pdf"
+            }),
+          },
+          CoreContent::Audio {
+            source: json!({
+              "data": "Zm9v",
+              "media_type": "audio/wav"
+            }),
+          },
+        ],
+      },
+      usage: CoreUsage::default(),
+      finish_reason: "stop".to_string(),
+      reasoning_details: None,
+    };
+
+    let payload = encode(&response);
+
+    assert_eq!(
+      payload["candidates"][0]["content"]["parts"][0]["fileData"]["mimeType"],
+      "application/pdf"
+    );
+    assert_eq!(
+      payload["candidates"][0]["content"]["parts"][1]["inlineData"]["mimeType"],
+      "audio/wav"
     );
   }
 }

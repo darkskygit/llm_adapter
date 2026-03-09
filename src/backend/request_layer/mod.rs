@@ -31,6 +31,32 @@ trait RequestLayerImpl {
   fn rewrite_body(&self, body: Value) -> Value {
     body
   }
+
+  fn build_embedding_url(&self, _base_url: &str, _model: &str) -> Result<String, BackendError> {
+    Err(BackendError::InvalidConfig(
+      "embedding dispatch is not supported for this request layer".to_string(),
+    ))
+  }
+
+  fn build_embedding_headers(&self, config: &BackendConfig) -> Vec<(String, String)> {
+    self.build_headers(config, false)
+  }
+
+  fn rewrite_embedding_body(&self, body: Value) -> Value {
+    body
+  }
+
+  fn build_rerank_url(&self, base_url: &str, model: &str) -> Result<String, BackendError> {
+    Ok(self.build_url(base_url, model, false))
+  }
+
+  fn build_rerank_headers(&self, config: &BackendConfig) -> Vec<(String, String)> {
+    self.build_headers(config, false)
+  }
+
+  fn rewrite_rerank_body(&self, body: Value) -> Value {
+    body
+  }
 }
 
 const ANTHROPIC_LAYER: AnthropicRequestLayer = AnthropicRequestLayer;
@@ -126,6 +152,30 @@ impl BackendRequestLayer {
 
   pub(super) fn rewrite_body(&self, body: Value) -> Value {
     self.implementation().rewrite_body(body)
+  }
+
+  pub(super) fn build_embedding_url(&self, base_url: &str, model: &str) -> Result<String, BackendError> {
+    self.implementation().build_embedding_url(base_url, model)
+  }
+
+  pub(super) fn build_embedding_headers(&self, config: &BackendConfig) -> Vec<(String, String)> {
+    self.implementation().build_embedding_headers(config)
+  }
+
+  pub(super) fn rewrite_embedding_body(&self, body: Value) -> Value {
+    self.implementation().rewrite_embedding_body(body)
+  }
+
+  pub(super) fn build_rerank_url(&self, base_url: &str, model: &str) -> Result<String, BackendError> {
+    self.implementation().build_rerank_url(base_url, model)
+  }
+
+  pub(super) fn build_rerank_headers(&self, config: &BackendConfig) -> Vec<(String, String)> {
+    self.implementation().build_rerank_headers(config)
+  }
+
+  pub(super) fn rewrite_rerank_body(&self, body: Value) -> Value {
+    self.implementation().rewrite_rerank_body(body)
   }
 }
 

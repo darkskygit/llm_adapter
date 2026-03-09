@@ -1,26 +1,10 @@
 use serde_json::{Map, Value, json};
 
 use super::{
-  CoreContent, CoreMessage, CoreResponse, CoreRole, CoreUsage, ProtocolError, get_first_str, get_first_str_or, get_str,
-  get_str_or, message_token_estimate, parse_json, parse_role_lossy, stringify_json, usage_from_responses,
+  CoreContent, CoreMessage, CoreResponse, CoreRole, OpenaiRequestFlavor, ProtocolError, core_role_to_string,
+  get_first_str, get_first_str_or, get_str, get_str_or, message_token_estimate, parse_json, parse_role_lossy,
+  stringify_json, usage_from_responses, usage_to_openai_json,
 };
-
-fn usage_to_openai_json(usage: &CoreUsage) -> Value {
-  let mut object = Map::from_iter([
-    ("input_tokens".to_string(), json!(usage.prompt_tokens)),
-    ("output_tokens".to_string(), json!(usage.completion_tokens)),
-    ("total_tokens".to_string(), json!(usage.total_tokens)),
-  ]);
-
-  if let Some(cached_tokens) = usage.cached_tokens {
-    object.insert(
-      "input_tokens_details".to_string(),
-      json!({ "cached_tokens": cached_tokens }),
-    );
-  }
-
-  Value::Object(object)
-}
 
 pub fn decode(body: &Value) -> Result<CoreResponse, ProtocolError> {
   let id = get_str(body, "id")
@@ -140,19 +124,14 @@ pub fn encode(response: &CoreResponse) -> Value {
       CoreContent::ToolResult { call_id, output, .. } => {
         tool_results.push((call_id.clone(), output.clone()));
       }
-      CoreContent::Image { .. } => {}
+      CoreContent::Image { .. } | CoreContent::Audio { .. } | CoreContent::File { .. } => {}
     }
   }
 
   let output = if !tool_calls.is_empty() {
     Value::Array(tool_calls)
   } else {
-    let role = match response.message.role {
-      CoreRole::System => "system",
-      CoreRole::User => "user",
-      CoreRole::Assistant => "assistant",
-      CoreRole::Tool => "tool",
-    };
+    let role = core_role_to_string(&response.message.role);
     let text = if !text_parts.is_empty() {
       text_parts.join("")
     } else if let Some((_call_id, output)) = tool_results.first() {
@@ -195,7 +174,10 @@ pub fn encode(response: &CoreResponse) -> Value {
       }),
     ),
     ("output".to_string(), output),
-    ("usage".to_string(), usage_to_openai_json(&response.usage)),
+    (
+      "usage".to_string(),
+      usage_to_openai_json(&response.usage, OpenaiRequestFlavor::Responses),
+    ),
   ]);
 
   if let Some(reasoning_details) = &response.reasoning_details {
@@ -210,7 +192,7 @@ mod tests {
   use serde_json::json;
 
   use super::*;
-  use crate::core::CoreRole;
+  use crate::core::{CoreRole, CoreUsage};
 
   #[test]
   fn decode_should_cover_backend_reasoning_and_tool_result_case() {

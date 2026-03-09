@@ -11,4 +11,8 @@ impl RequestLayerImpl for ResponsesRequestLayer {
   fn build_headers(&self, config: &BackendConfig, stream: bool) -> Vec<(String, String)> {
     build_bearer_headers(config, stream)
   }
+
+  fn build_embedding_url(&self, base_url: &str, _model: &str) -> Result<String, crate::backend::BackendError> {
+    Ok(join_url(base_url, "/v1/embeddings"))
+  }
 }

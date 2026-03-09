@@ -634,8 +634,9 @@ impl PromptManager {
               let source = build_image_source(image_url.as_deref(), image_path.as_deref())?;
               content.push(CoreContent::Image { source });
             }
-            ContentPart::Audio { .. } => {
-              return Err(anyhow!("audio content is not supported by llm_adapter core model yet",));
+            ContentPart::Audio { audio_url, audio_path } => {
+              let source = build_audio_source(audio_url.as_deref(), audio_path.as_deref())?;
+              content.push(CoreContent::Audio { source });
             }
           }
         }
@@ -672,6 +673,19 @@ fn build_image_source(image_url: Option<&str>, image_path: Option<&str>) -> Resu
   Err(anyhow!("image content requires `image_url` or `image_path`"))
 }
 
+fn build_audio_source(audio_url: Option<&str>, audio_path: Option<&str>) -> Result<serde_json::Value> {
+  if let Some(url) = audio_url {
+    return Ok(json!({ "url": url }));
+  }
+  if let Some(path) = audio_path {
+    let bytes = fs::read(path).with_context(|| format!("failed to read audio file: {path}"))?;
+    let media_type = detect_audio_mime_type(Path::new(path));
+    let encoded = base64::engine::general_purpose::STANDARD.encode(bytes);
+    return Ok(json!({ "media_type": media_type, "data": encoded }));
+  }
+  Err(anyhow!("audio content requires `audio_url` or `audio_path`"))
+}
+
 fn load_image_as_data_url(path: &str) -> Result<String> {
   let path = Path::new(path);
   let bytes = fs::read(path).with_context(|| format!("failed to read image file: {}", path.display()))?;
@@ -693,6 +707,21 @@ fn detect_image_mime_type(path: &Path) -> &'static str {
     "gif" => "image/gif",
     "webp" => "image/webp",
     _ => "image/jpeg",
+  }
+}
+
+fn detect_audio_mime_type(path: &Path) -> &'static str {
+  match path
+    .extension()
+    .and_then(|ext| ext.to_str())
+    .unwrap_or_default()
+    .to_ascii_lowercase()
+    .as_str()
+  {
+    "wav" => "audio/wav",
+    "ogg" | "oga" => "audio/ogg",
+    "flac" => "audio/flac",
+    _ => "audio/mpeg",
   }
 }
 
@@ -803,6 +832,7 @@ impl BenchmarkRunner {
       tool_choice: None,
       include: None,
       reasoning: None,
+      response_schema: None,
     };
 
     let total_requests = self.config.benchmark.total_requests;

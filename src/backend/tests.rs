@@ -2,7 +2,10 @@ use serde_json::{Value, json};
 
 use super::{
   super::{
-    core::StreamEvent,
+    core::{
+      CoreContent, CoreMessage, CoreRole, EmbeddingRequest, RerankCandidate, RerankRequest, StreamEvent,
+      StructuredRequest,
+    },
     stream::StreamEncodingTarget,
     test_support::{
       MockHttpClient, MockHttpResponse, sample_backend_config, sample_backend_config_with_header, sample_request,
@@ -10,7 +13,8 @@ use super::{
     },
   },
   BackendError, BackendProtocol, BackendRequestLayer, HttpResponse, HttpStreamResponse, collect_stream_events,
-  dispatch_request, dispatch_stream_encoded_with, dispatch_stream_events_with,
+  dispatch_embedding_request, dispatch_request, dispatch_rerank_request, dispatch_stream_encoded_with,
+  dispatch_stream_events_with, dispatch_structured_request,
 };
 
 #[test]
@@ -114,6 +118,224 @@ fn should_dispatch_gemini_api_request() {
       ("x-test-header".to_string(), "1".to_string()),
     ]
   );
+}
+
+#[test]
+fn should_dispatch_openai_structured_request() {
+  let client = MockHttpClient::with_json_responses(vec![MockHttpResponse::Json(Ok(HttpResponse {
+    status: 200,
+    body: json!({
+      "id": "resp_struct_1",
+      "model": "gpt-4.1",
+      "status": "completed",
+      "output": [{
+        "type": "message",
+        "role": "assistant",
+        "content": [{
+          "type": "output_text",
+          "text": "{\"summary\":\"AFFiNE\"}"
+        }]
+      }],
+      "usage": {
+        "input_tokens": 10,
+        "output_tokens": 4,
+        "total_tokens": 14
+      }
+    }),
+  }))]);
+
+  let request = StructuredRequest {
+    model: "gpt-4.1".to_string(),
+    messages: vec![CoreMessage {
+      role: CoreRole::User,
+      content: vec![CoreContent::Text {
+        text: "Summarize AFFiNE.".to_string(),
+      }],
+    }],
+    schema: json!({
+      "type": "object",
+      "properties": {
+        "summary": { "type": "string" }
+      },
+      "required": ["summary"],
+      "additionalProperties": false
+    }),
+    max_tokens: Some(64),
+    temperature: Some(0.2),
+    reasoning: Some(json!({ "effort": "medium" })),
+    strict: Some(true),
+    response_mime_type: Some("application/json".to_string()),
+  };
+
+  let response = dispatch_structured_request(
+    &client,
+    &sample_backend_config_with_header(false),
+    BackendProtocol::OpenaiResponses,
+    &request,
+  )
+  .unwrap();
+
+  assert_eq!(response.output_text, "{\"summary\":\"AFFiNE\"}");
+  let requests = client.requests();
+  assert_eq!(requests.len(), 1);
+  assert_eq!(requests[0].url, "https://api.example.com/v1/responses");
+  assert_eq!(requests[0].body["text"]["format"]["type"], "json_schema");
+  assert_eq!(requests[0].body["text"]["format"]["schema"], request.schema);
+}
+
+#[test]
+fn should_dispatch_gemini_embedding_request() {
+  let client = MockHttpClient::with_json_responses(vec![MockHttpResponse::Json(Ok(HttpResponse {
+    status: 200,
+    body: json!({
+      "embeddings": [
+        { "values": [0.1, 0.2] },
+        { "values": [0.3, 0.4] }
+      ]
+    }),
+  }))]);
+
+  let mut config = sample_backend_config_with_header(false);
+  config.base_url = "https://generativelanguage.googleapis.com/v1beta".to_string();
+  config.request_layer = Some(BackendRequestLayer::GeminiApi);
+
+  let response = dispatch_embedding_request(
+    &client,
+    &config,
+    BackendProtocol::GeminiGenerateContent,
+    &EmbeddingRequest {
+      model: "gemini-embedding-001".to_string(),
+      inputs: vec!["hello".to_string(), "world".to_string()],
+      dimensions: Some(256),
+      task_type: Some("RETRIEVAL_DOCUMENT".to_string()),
+    },
+  )
+  .unwrap();
+
+  assert_eq!(response.embeddings, vec![vec![0.1, 0.2], vec![0.3, 0.4]]);
+  let requests = client.requests();
+  assert_eq!(
+    requests[0].url,
+    "https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-001:batchEmbedContents"
+  );
+  assert_eq!(requests[0].body["requests"][0]["model"], "models/gemini-embedding-001");
+  assert_eq!(requests[0].body["requests"][0]["outputDimensionality"], 256);
+  assert_eq!(requests[0].body["requests"][0]["taskType"], "RETRIEVAL_DOCUMENT");
+}
+
+#[test]
+fn should_dispatch_gemini_vertex_embedding_request() {
+  let client = MockHttpClient::with_json_responses(vec![MockHttpResponse::Json(Ok(HttpResponse {
+    status: 200,
+    body: json!({
+      "predictions": [{
+        "embeddings": {
+          "values": [0.1, 0.2],
+          "statistics": { "token_count": 3 }
+        }
+      }]
+    }),
+  }))]);
+
+  let mut config = sample_backend_config_with_header(false);
+  config.base_url = "https://vertex.example/v1/projects/p1/locations/us-central1/publishers/google".to_string();
+  config.request_layer = Some(BackendRequestLayer::GeminiVertex);
+
+  let response = dispatch_embedding_request(
+    &client,
+    &config,
+    BackendProtocol::GeminiGenerateContent,
+    &EmbeddingRequest {
+      model: "gemini-embedding-001".to_string(),
+      inputs: vec!["hello".to_string()],
+      dimensions: Some(128),
+      task_type: Some("RETRIEVAL_DOCUMENT".to_string()),
+    },
+  )
+  .unwrap();
+
+  assert_eq!(response.embeddings, vec![vec![0.1, 0.2]]);
+  assert_eq!(response.usage.unwrap().total_tokens, 3);
+  let requests = client.requests();
+  assert_eq!(
+    requests[0].url,
+    "https://vertex.example/v1/projects/p1/locations/us-central1/publishers/google/models/gemini-embedding-001:predict"
+  );
+  assert_eq!(requests[0].body["instances"][0]["task_type"], "RETRIEVAL_DOCUMENT");
+  assert_eq!(requests[0].body["parameters"]["outputDimensionality"], 128);
+}
+
+#[test]
+fn should_dispatch_openai_rerank_request() {
+  let client = MockHttpClient::with_json_responses(vec![
+    MockHttpResponse::Json(Ok(HttpResponse {
+      status: 200,
+      body: json!({
+        "model": "gpt-5.2",
+        "choices": [{
+          "logprobs": {
+            "content": [{
+              "top_logprobs": [
+                { "token": " Yes", "logprob": -0.1 },
+                { "token": " No", "logprob": -2.0 }
+              ]
+            }]
+          }
+        }]
+      }),
+    })),
+    MockHttpResponse::Json(Ok(HttpResponse {
+      status: 200,
+      body: json!({
+        "model": "gpt-5.2",
+        "choices": [{
+          "logprobs": {
+            "content": [{
+              "top_logprobs": [
+                { "token": " Yes", "logprob": -2.0 },
+                { "token": " No", "logprob": -0.1 }
+              ]
+            }]
+          }
+        }]
+      }),
+    })),
+  ]);
+
+  let response = dispatch_rerank_request(
+    &client,
+    &sample_backend_config_with_header(false),
+    BackendProtocol::OpenaiChatCompletions,
+    &RerankRequest {
+      model: "gpt-5.2".to_string(),
+      query: "programming".to_string(),
+      candidates: vec![
+        RerankCandidate {
+          id: Some("js".to_string()),
+          text: "Is JavaScript relevant?".to_string(),
+        },
+        RerankCandidate {
+          id: Some("weather".to_string()),
+          text: "Is weather relevant?".to_string(),
+        },
+      ],
+      top_n: None,
+    },
+  )
+  .unwrap();
+
+  assert_eq!(response.model, "gpt-5.2");
+  assert_eq!(response.scores.len(), 2);
+  assert!(response.scores[0] > 0.8);
+  assert!(response.scores[1] < 0.2);
+
+  let requests = client.requests();
+  assert_eq!(requests.len(), 2);
+  assert_eq!(requests[0].url, "https://api.example.com/v1/chat/completions");
+  assert_eq!(requests[0].body["logprobs"], true);
+  assert_eq!(requests[0].body["top_logprobs"], 5);
+  assert_eq!(requests[0].body["max_completion_tokens"], 16);
+  assert_eq!(requests[0].body["reasoning_effort"], "none");
 }
 
 #[test]

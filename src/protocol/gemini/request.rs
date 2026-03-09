@@ -5,7 +5,9 @@ use serde_json::{Map, Value, json};
 
 use super::{
   CoreContent, CoreMessage, CoreRequest, CoreRole, CoreToolChoice, CoreToolChoiceMode, CoreToolDefinition,
-  ProtocolError, get_str, get_u32,
+  ProtocolError, attachment_source,
+  common::{attachment_source_to_part, get_string, get_value, parse_parts, tool_result_response},
+  get_str, get_u32,
 };
 
 #[derive(Debug, Deserialize)]
@@ -43,14 +45,6 @@ struct GeminiFunctionDeclaration {
   parameters: Option<Value>,
 }
 
-fn get_value<'a>(value: &'a Value, keys: &[&str]) -> Option<&'a Value> {
-  keys.iter().find_map(|key| value.get(*key))
-}
-
-fn get_string<'a>(value: &'a Value, keys: &[&str]) -> Option<&'a str> {
-  get_value(value, keys).and_then(Value::as_str)
-}
-
 fn parse_gemini_role(role: Option<&str>, has_function_response: bool) -> CoreRole {
   if has_function_response {
     CoreRole::Tool
@@ -61,100 +55,6 @@ fn parse_gemini_role(role: Option<&str>, has_function_response: bool) -> CoreRol
       _ => CoreRole::Assistant,
     }
   }
-}
-
-fn parse_function_response_output(value: &Value) -> (Value, Option<bool>) {
-  let Some(object) = value.as_object() else {
-    return (value.clone(), None);
-  };
-
-  match (object.get("output"), object.get("is_error").and_then(Value::as_bool)) {
-    (Some(output), is_error) => (output.clone(), is_error),
-    (None, is_error) => (Value::Object(object.clone()), is_error),
-  }
-}
-
-fn parse_content_parts(parts: Vec<Value>) -> Vec<CoreContent> {
-  let mut call_ids_by_name = HashMap::new();
-
-  parts
-    .into_iter()
-    .enumerate()
-    .filter_map(|(index, part)| {
-      if let Some(text) = get_string(&part, &["text"]) {
-        return Some(if part.get("thought").and_then(Value::as_bool).unwrap_or(false) {
-          CoreContent::Reasoning {
-            text: text.to_string(),
-            signature: get_string(&part, &["thoughtSignature", "thought_signature"]).map(ToString::to_string),
-          }
-        } else {
-          CoreContent::Text { text: text.to_string() }
-        });
-      }
-
-      if let Some(function_call) = get_value(&part, &["functionCall", "function_call"]) {
-        let name = get_string(function_call, &["name"]).unwrap_or_default().to_string();
-        let call_id = get_string(function_call, &["id", "callId", "call_id"])
-          .map(ToString::to_string)
-          .unwrap_or_else(|| {
-            if name.is_empty() {
-              format!("call_{index}")
-            } else {
-              format!("{name}:{index}")
-            }
-          });
-        call_ids_by_name.insert(name.clone(), call_id.clone());
-        return Some(CoreContent::ToolCall {
-          call_id,
-          name,
-          arguments: function_call
-            .get("args")
-            .cloned()
-            .unwrap_or_else(|| Value::Object(Map::new())),
-          thought: None,
-        });
-      }
-
-      if let Some(function_response) = get_value(&part, &["functionResponse", "function_response"]) {
-        let name = get_string(function_response, &["name"]).unwrap_or("call");
-        let raw_response = function_response
-          .get("response")
-          .cloned()
-          .unwrap_or_else(|| Value::Object(Map::new()));
-        let call_id = get_string(&raw_response, &["call_id", "callId"])
-          .map(ToString::to_string)
-          .or_else(|| call_ids_by_name.get(name).cloned())
-          .unwrap_or_else(|| format!("{name}:{index}"));
-        let (output, is_error) = parse_function_response_output(&raw_response);
-        return Some(CoreContent::ToolResult {
-          call_id,
-          output,
-          is_error,
-        });
-      }
-
-      if let Some(inline_data) = get_value(&part, &["inlineData", "inline_data"]) {
-        return Some(CoreContent::Image {
-          source: json!({
-            "type": "base64",
-            "media_type": get_string(inline_data, &["mimeType", "mime_type"]).unwrap_or("application/octet-stream"),
-            "data": get_string(inline_data, &["data"]).unwrap_or_default(),
-          }),
-        });
-      }
-
-      if let Some(file_data) = get_value(&part, &["fileData", "file_data"]) {
-        return Some(CoreContent::Image {
-          source: json!({
-            "url": get_string(file_data, &["fileUri", "file_uri"]).unwrap_or_default(),
-            "media_type": get_string(file_data, &["mimeType", "mime_type"]).unwrap_or("application/octet-stream"),
-          }),
-        });
-      }
-
-      None
-    })
-    .collect()
 }
 
 fn parse_tool_choice(tool_config: Option<&Value>) -> Result<Option<CoreToolChoice>, ProtocolError> {
@@ -230,83 +130,6 @@ fn decode_reasoning_config(generation_config: Option<&Value>) -> (Option<Vec<Str
   (include, (!reasoning.is_empty()).then_some(Value::Object(reasoning)))
 }
 
-fn guess_media_type_from_url(url: &str) -> &'static str {
-  let normalized = url.split('?').next().unwrap_or(url).to_ascii_lowercase();
-  if normalized.ends_with(".png") {
-    "image/png"
-  } else if normalized.ends_with(".jpg") || normalized.ends_with(".jpeg") {
-    "image/jpeg"
-  } else if normalized.ends_with(".webp") {
-    "image/webp"
-  } else if normalized.ends_with(".gif") {
-    "image/gif"
-  } else if normalized.ends_with(".pdf") {
-    "application/pdf"
-  } else {
-    "application/octet-stream"
-  }
-}
-
-fn image_source_to_part(source: &Value) -> Value {
-  match source {
-    Value::Object(object) => {
-      if let (Some(Value::String(media_type)), Some(Value::String(data))) =
-        (object.get("media_type"), object.get("data"))
-      {
-        return json!({
-          "inlineData": {
-            "mimeType": media_type,
-            "data": data,
-          }
-        });
-      }
-
-      if let Some(Value::String(url)) = object.get("url") {
-        return json!({
-          "fileData": {
-            "mimeType": object
-              .get("media_type")
-              .and_then(Value::as_str)
-              .unwrap_or_else(|| guess_media_type_from_url(url)),
-            "fileUri": url,
-          }
-        });
-      }
-
-      if let (Some(Value::String(media_type)), Some(Value::String(data))) = (object.get("mimeType"), object.get("data"))
-      {
-        return json!({
-          "inlineData": {
-            "mimeType": media_type,
-            "data": data,
-          }
-        });
-      }
-      Value::Object(object.clone())
-    }
-    Value::String(url) => json!({
-      "fileData": {
-        "mimeType": guess_media_type_from_url(url),
-        "fileUri": url,
-      }
-    }),
-    _ => Value::Null,
-  }
-}
-
-fn tool_result_response(output: &Value, is_error: Option<bool>) -> Value {
-  match (output, is_error) {
-    (Value::Object(object), None) => Value::Object(object.clone()),
-    _ => {
-      let mut response = Map::from_iter([("output".to_string(), output.clone())]);
-      if let Some(is_error) = is_error {
-        response.insert("is_error".to_string(), Value::Bool(is_error));
-      }
-      Value::Object(response)
-    }
-  }
-}
-
 fn core_content_to_part(content: &CoreContent, tool_names: &mut HashMap<String, String>) -> Option<Value> {
   match content {
     CoreContent::Text { text } => Some(json!({ "text": text })),
@@ -344,7 +167,9 @@ fn core_content_to_part(content: &CoreContent, tool_names: &mut HashMap<String, 
         "response": tool_result_response(output, *is_error),
       }
     })),
-    CoreContent::Image { source } => Some(image_source_to_part(source)),
+    CoreContent::Image { .. } | CoreContent::Audio { .. } | CoreContent::File { .. } => {
+      attachment_source(content).map(|(source, _)| attachment_source_to_part(source))
+    }
   }
 }
 
@@ -412,7 +237,7 @@ pub fn decode(request: &Value) -> Result<CoreRequest, ProtocolError> {
 
   let mut messages = Vec::new();
   if let Some(system_instruction) = request.system_instruction {
-    let content = parse_content_parts(system_instruction.parts);
+    let content = parse_parts(&system_instruction.parts);
     if !content.is_empty() {
       messages.push(CoreMessage {
         role: CoreRole::System,
@@ -429,7 +254,7 @@ pub fn decode(request: &Value) -> Result<CoreRequest, ProtocolError> {
     let role = parse_gemini_role(content.role.as_deref(), has_function_response);
     messages.push(CoreMessage {
       role,
-      content: parse_content_parts(content.parts),
+      content: parse_parts(&content.parts),
     });
   }
 
@@ -463,6 +288,11 @@ pub fn decode(request: &Value) -> Result<CoreRequest, ProtocolError> {
     tool_choice: parse_tool_choice(request.tool_config.as_ref())?,
     include,
     reasoning,
+    response_schema: request
+      .generation_config
+      .as_ref()
+      .and_then(|config| config.get("responseSchema"))
+      .cloned(),
   })
 }
 
@@ -551,6 +381,16 @@ pub fn encode(request: &CoreRequest, stream: bool) -> Value {
     }
     generation_config.insert("thinkingConfig".to_string(), Value::Object(thinking_config));
   }
+  if let Some(response_schema) = &request.response_schema {
+    generation_config.insert(
+      "responseMimeType".to_string(),
+      Value::String("application/json".to_string()),
+    );
+    generation_config.insert(
+      "responseSchema".to_string(),
+      sanitize_function_parameters(response_schema),
+    );
+  }
   if !generation_config.is_empty() {
     payload.insert("generationConfig".to_string(), Value::Object(generation_config));
   }
@@ -638,7 +478,7 @@ mod tests {
           "role": "user",
           "content": [
             { "type": "text", "text": "Read this image" },
-            { "type": "image", "source": { "type": "base64", "media_type": "image/png", "data": "Zm9v" } }
+            { "type": "image", "source": { "media_type": "image/png", "data": "Zm9v" } }
           ]
         },
         {
@@ -694,6 +534,18 @@ mod tests {
                 "media_type": "image/png"
               }),
             },
+            CoreContent::File {
+              source: json!({
+                "url": "https://example.com/a.pdf",
+                "media_type": "application/pdf"
+              }),
+            },
+            CoreContent::Audio {
+              source: json!({
+                "data": "Zm9v",
+                "media_type": "audio/wav"
+              }),
+            },
           ],
         },
         CoreMessage {
@@ -733,6 +585,7 @@ mod tests {
       }),
       include: Some(vec!["reasoning".to_string()]),
       reasoning: Some(json!({ "effort": "medium" })),
+      response_schema: None,
     };
 
     let payload = encode(&request, false);
@@ -743,6 +596,14 @@ mod tests {
     assert_eq!(
       payload["contents"][0]["parts"][1]["fileData"]["fileUri"],
       "https://example.com/a.png"
+    );
+    assert_eq!(
+      payload["contents"][0]["parts"][2]["fileData"]["mimeType"],
+      "application/pdf"
+    );
+    assert_eq!(
+      payload["contents"][0]["parts"][3]["inlineData"]["mimeType"],
+      "audio/wav"
     );
     assert_eq!(payload["contents"][1]["role"], "model");
     assert_eq!(payload["contents"][1]["parts"][0]["thought"], true);
@@ -757,6 +618,40 @@ mod tests {
     assert_eq!(payload["generationConfig"]["maxOutputTokens"], 256);
     assert_eq!(payload["generationConfig"]["thinkingConfig"]["includeThoughts"], true);
     assert_eq!(payload["generationConfig"]["thinkingConfig"]["thinkingBudget"], 4096);
+  }
+
+  #[test]
+  fn decode_should_preserve_audio_and_file_parts() {
+    let core = decode(&json!({
+      "model": "gemini-2.5-flash",
+      "contents": [{
+        "role": "user",
+        "parts": [
+          {
+            "fileData": {
+              "mimeType": "application/pdf",
+              "fileUri": "https://example.com/a.pdf"
+            }
+          },
+          {
+            "inlineData": {
+              "mimeType": "audio/mpeg",
+              "data": "Zm9v"
+            }
+          }
+        ]
+      }]
+    }))
+    .unwrap();
+
+    assert!(matches!(
+      &core.messages[0].content[0],
+      CoreContent::File { source } if source["media_type"] == "application/pdf"
+    ));
+    assert!(matches!(
+      &core.messages[0].content[1],
+      CoreContent::Audio { source } if source["media_type"] == "audio/mpeg" && source["data"] == "Zm9v"
+    ));
   }
 
   #[test]
@@ -792,6 +687,7 @@ mod tests {
       tool_choice: None,
       include: None,
       reasoning: None,
+      response_schema: None,
     };
 
     let payload = encode(&request, false);
@@ -809,6 +705,48 @@ mod tests {
           }
         }
       })
+    );
+  }
+
+  #[test]
+  fn encode_should_emit_response_schema_for_structured_outputs() {
+    let payload = encode(
+      &CoreRequest {
+        model: "gemini-2.5-flash".to_string(),
+        messages: vec![CoreMessage {
+          role: CoreRole::User,
+          content: vec![CoreContent::Text {
+            text: "Summarize AFFiNE.".to_string(),
+          }],
+        }],
+        stream: false,
+        max_tokens: Some(64),
+        temperature: None,
+        tools: vec![],
+        tool_choice: None,
+        include: None,
+        reasoning: None,
+        response_schema: Some(json!({
+          "type": "object",
+          "properties": {
+            "summary": { "type": "string" }
+          },
+          "required": ["summary"],
+          "additionalProperties": false
+        })),
+      },
+      false,
+    );
+
+    assert_eq!(payload["generationConfig"]["responseMimeType"], "application/json");
+    assert_eq!(
+      payload["generationConfig"]["responseSchema"]["required"],
+      json!(["summary"])
+    );
+    assert!(
+      payload["generationConfig"]["responseSchema"]
+        .get("additionalProperties")
+        .is_none()
     );
   }
 }

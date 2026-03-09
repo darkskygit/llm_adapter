@@ -1,32 +1,32 @@
 use serde_json::{Map, Value, json};
 
 use super::{
-  CoreContent, CoreMessage, CoreResponse, CoreRole, CoreUsage, ProtocolError, get_first_str_or, get_str, get_str_or,
-  message_token_estimate, parse_json_ref, parse_role_lossy, stringify_json, usage_from_openai,
+  CoreContent, CoreMessage, CoreResponse, CoreRole, OpenaiRequestFlavor, ProtocolError, core_role_to_string, get_str,
+  get_str_or, message_token_estimate, parse_message_content, parse_role_lossy, stringify_json, usage_from_openai,
+  usage_to_openai_json,
 };
 
-fn parse_message_from_response(message: &Value) -> CoreMessage {
+fn parse_message_from_response(message: &Value) -> Result<CoreMessage, ProtocolError> {
   let role = parse_role_lossy(get_str_or(message, "role", "assistant"));
-  let mut content = Vec::new();
-
-  if let Some(text) = get_str(message, "content")
-    && !text.is_empty()
-  {
-    content.push(CoreContent::Text { text: text.to_string() });
-  }
-
-  if let Some(items) = message.get("content").and_then(Value::as_array) {
-    for item in items {
-      if let Some(text) = get_str(item, "text")
-        && !text.is_empty()
-      {
-        content.push(CoreContent::Text { text: text.to_string() });
-      } else if get_str(item, "type") == Some("image_url") {
-        let source = item.get("image_url").cloned().unwrap_or(Value::Null);
-        content.push(CoreContent::Image { source });
-      }
-    }
-  }
+  let tool_call_id = if role == CoreRole::Tool {
+    get_str(message, "tool_call_id").map(ToString::to_string)
+  } else {
+    None
+  };
+  let content_value = message.get("content").cloned();
+  let normalized_content = match content_value {
+    Some(Value::String(_)) | Some(Value::Array(_)) => content_value,
+    Some(Value::Null) | None => None,
+    _ if tool_call_id.is_some() => content_value,
+    _ => None,
+  };
+  let mut content = parse_message_content(
+    normalized_content,
+    tool_call_id,
+    message.get("tool_calls").cloned(),
+    "openai_chat.message.tool_calls[].id|call_id",
+  )?;
+  content.retain(|item| !matches!(item, CoreContent::Text { text } if text.is_empty()));
 
   if let Some(reasoning) = get_str(message, "reasoning_content")
     && !reasoning.is_empty()
@@ -37,64 +37,7 @@ fn parse_message_from_response(message: &Value) -> CoreMessage {
     });
   }
 
-  if let Some(tool_calls) = message.get("tool_calls").and_then(Value::as_array) {
-    for tool_call in tool_calls {
-      let call_id = get_first_str_or(tool_call, &["id", "call_id"], "call_0").to_string();
-      let function = tool_call
-        .get("function")
-        .cloned()
-        .unwrap_or_else(|| Value::Object(Map::new()));
-      let name = get_str_or(&function, "name", "").to_string();
-      let arguments = function
-        .get("arguments")
-        .map(parse_json_ref)
-        .unwrap_or_else(|| Value::Object(Map::new()));
-      let thought = get_str(tool_call, "thought").map(ToString::to_string);
-      content.push(CoreContent::ToolCall {
-        call_id,
-        name,
-        arguments,
-        thought,
-      });
-    }
-  }
-
-  if role == CoreRole::Tool
-    && let Some(call_id) = get_str(message, "tool_call_id")
-  {
-    let output = message
-      .get("content")
-      .map(parse_json_ref)
-      .unwrap_or_else(|| Value::String(String::new()));
-    content = vec![CoreContent::ToolResult {
-      call_id: call_id.to_string(),
-      output,
-      is_error: None,
-    }];
-  }
-
-  CoreMessage { role, content }
-}
-
-fn usage_to_openai_json(usage: &CoreUsage) -> Value {
-  let mut object = Map::from_iter([
-    ("prompt_tokens".to_string(), json!(usage.prompt_tokens)),
-    ("completion_tokens".to_string(), json!(usage.completion_tokens)),
-    ("total_tokens".to_string(), json!(usage.total_tokens)),
-  ]);
-
-  if let Some(cached_tokens) = usage.cached_tokens {
-    object.insert(
-      "prompt_tokens_details".to_string(),
-      json!({ "cached_tokens": cached_tokens }),
-    );
-    object.insert(
-      "input_tokens_details".to_string(),
-      json!({ "cached_tokens": cached_tokens }),
-    );
-  }
-
-  Value::Object(object)
+  Ok(CoreMessage { role, content })
 }
 
 pub fn decode(body: &Value) -> Result<CoreResponse, ProtocolError> {
@@ -113,7 +56,7 @@ pub fn decode(body: &Value) -> Result<CoreResponse, ProtocolError> {
     choice
       .get("message")
       .ok_or(ProtocolError::MissingField("openai_chat.choices[0].message"))?,
-  );
+  )?;
   let completion_estimate = message_token_estimate(&message);
   let usage = usage_from_openai(body.get("usage"), 0, completion_estimate);
   let finish_reason = get_str_or(choice, "finish_reason", "stop").to_string();
@@ -164,16 +107,11 @@ pub fn encode(response: &CoreResponse) -> Value {
       CoreContent::ToolResult { call_id, output, .. } => {
         tool_result = Some((call_id.clone(), output.clone()));
       }
-      CoreContent::Image { .. } => {}
+      CoreContent::Image { .. } | CoreContent::Audio { .. } | CoreContent::File { .. } => {}
     }
   }
 
-  let role = match response.message.role {
-    CoreRole::System => "system",
-    CoreRole::User => "user",
-    CoreRole::Assistant => "assistant",
-    CoreRole::Tool => "tool",
-  };
+  let role = core_role_to_string(&response.message.role);
 
   let mut message = Map::from_iter([("role".to_string(), json!(role))]);
   if let Some((tool_call_id, output)) = tool_result {
@@ -205,7 +143,10 @@ pub fn encode(response: &CoreResponse) -> Value {
         "finish_reason": response.finish_reason,
       }]),
     ),
-    ("usage".to_string(), usage_to_openai_json(&response.usage)),
+    (
+      "usage".to_string(),
+      usage_to_openai_json(&response.usage, OpenaiRequestFlavor::ChatCompletions),
+    ),
   ]);
 
   if let Some(reasoning_details) = &response.reasoning_details {

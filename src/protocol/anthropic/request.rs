@@ -1,10 +1,11 @@
-use base64::{Engine as _, engine::general_purpose};
 use serde::Deserialize;
 use serde_json::{Map, Value, json};
 
 use super::{
   CoreContent, CoreMessage, CoreRequest, CoreRole, CoreToolChoice, CoreToolChoiceMode, CoreToolDefinition,
-  ProtocolError, core_role_to_string, get_first_str, get_str, get_str_or, get_u32, parse_role, stringify_json,
+  ProtocolError,
+  common::{AnthropicContentParseMode, core_content_to_anthropic, parse_content_blocks},
+  core_role_to_string, get_str, get_u32, parse_role,
 };
 
 #[derive(Debug, Deserialize)]
@@ -74,74 +75,6 @@ fn parse_tool_choice(value: Option<Value>) -> Result<Option<CoreToolChoice>, Pro
   }
 }
 
-fn parse_content_blocks(value: Value) -> Result<Vec<CoreContent>, ProtocolError> {
-  match value {
-    Value::String(text) => Ok(vec![CoreContent::Text { text }]),
-    Value::Array(items) => {
-      let mut content = Vec::new();
-      for item in items {
-        if !item.is_object() {
-          continue;
-        }
-
-        let typ = get_str_or(&item, "type", "text");
-        match typ {
-          "text" => {
-            if let Some(text) = get_str(&item, "text") {
-              content.push(CoreContent::Text { text: text.to_string() });
-            }
-          }
-          "thinking" => {
-            let text = get_first_str(&item, &["thinking", "text"])
-              .unwrap_or_default()
-              .to_string();
-            let signature = get_str(&item, "signature").map(ToString::to_string);
-            content.push(CoreContent::Reasoning { text, signature });
-          }
-          "tool_use" => {
-            let call_id = get_str(&item, "id")
-              .ok_or(ProtocolError::MissingField("content[].id"))?
-              .to_string();
-            let name = get_str(&item, "name")
-              .ok_or(ProtocolError::MissingField("content[].name"))?
-              .to_string();
-            let arguments = item.get("input").cloned().unwrap_or(Value::Null);
-            let thought = get_str(&item, "thought").map(ToString::to_string);
-            content.push(CoreContent::ToolCall {
-              call_id,
-              name,
-              arguments,
-              thought,
-            });
-          }
-          "tool_result" => {
-            let call_id = get_str(&item, "tool_use_id")
-              .ok_or(ProtocolError::MissingField("content[].tool_use_id"))?
-              .to_string();
-            let output = item.get("content").cloned().unwrap_or(Value::Null);
-            let is_error = item.get("is_error").and_then(Value::as_bool);
-            content.push(CoreContent::ToolResult {
-              call_id,
-              output,
-              is_error,
-            });
-          }
-          "image" => {
-            let source = item.get("source").cloned().unwrap_or_else(|| item.clone());
-            content.push(CoreContent::Image { source });
-          }
-          _ => {}
-        }
-      }
-      Ok(content)
-    }
-    _ => Err(ProtocolError::InvalidValue {
-      field: "content",
-      message: "expected string or array".to_string(),
-    }),
-  }
-}
-
 fn core_tool_choice_to_anthropic(choice: Option<&CoreToolChoice>) -> Option<Value> {
   let choice = choice?;
   Some(match choice {
@@ -162,142 +95,6 @@ fn core_tool_to_anthropic(tool: &CoreToolDefinition) -> Value {
   })
 }
 
-fn parse_base64_data_url(url: &str) -> Option<(String, String)> {
-  let data_url = url.strip_prefix("data:")?;
-  let (meta, payload) = data_url.split_once(',')?;
-  let mut meta_parts = meta.split(';');
-  let media_type = meta_parts.next().unwrap_or_default();
-  let is_base64 = meta_parts.any(|part| part.eq_ignore_ascii_case("base64"));
-  if !is_base64 {
-    return None;
-  }
-
-  let media_type = if media_type.is_empty() {
-    "application/octet-stream".to_string()
-  } else {
-    media_type.to_string()
-  };
-  Some((media_type, payload.to_string()))
-}
-
-fn infer_image_media_type_from_base64_data(data: &str) -> Option<&'static str> {
-  let prefix_len = data.len().min(256);
-  let usable_len = prefix_len - (prefix_len % 4);
-  if usable_len == 0 {
-    return None;
-  }
-  let prefix = &data[..usable_len];
-  let decoded = general_purpose::STANDARD
-    .decode(prefix)
-    .or_else(|_| general_purpose::URL_SAFE.decode(prefix))
-    .ok()?;
-
-  if decoded.starts_with(&[0xFF, 0xD8, 0xFF]) {
-    return Some("image/jpeg");
-  }
-  if decoded.starts_with(&[0x89, b'P', b'N', b'G', b'\r', b'\n', 0x1A, b'\n']) {
-    return Some("image/png");
-  }
-  if decoded.starts_with(b"GIF87a") || decoded.starts_with(b"GIF89a") {
-    return Some("image/gif");
-  }
-  if decoded.len() >= 12 && &decoded[..4] == b"RIFF" && &decoded[8..12] == b"WEBP" {
-    return Some("image/webp");
-  }
-  None
-}
-
-fn normalize_image_url_source(url: &str) -> Value {
-  if let Some((media_type, data)) = parse_base64_data_url(url) {
-    let normalized_media_type = infer_image_media_type_from_base64_data(&data)
-      .map(ToString::to_string)
-      .unwrap_or(media_type);
-    json!({ "type": "base64", "media_type": normalized_media_type, "data": data })
-  } else {
-    json!({ "type": "url", "url": url })
-  }
-}
-
-fn normalize_image_source_to_anthropic(source: &Value) -> Value {
-  match source {
-    Value::Object(object) => {
-      if object.get("type").is_some() {
-        return source.clone();
-      }
-      if let (Some(Value::String(media_type)), Some(Value::String(data))) =
-        (object.get("media_type"), object.get("data"))
-      {
-        return json!({ "type": "base64", "media_type": media_type, "data": data });
-      }
-      if let Some(Value::String(url)) = object.get("url") {
-        return normalize_image_url_source(url);
-      }
-      source.clone()
-    }
-    Value::String(url) => normalize_image_url_source(url),
-    _ => source.clone(),
-  }
-}
-
-fn is_anthropic_content_block(value: &Value) -> bool {
-  get_str(value, "type").is_some()
-}
-
-fn tool_result_content_to_anthropic(output: &Value) -> Value {
-  match output {
-    Value::String(_) => output.clone(),
-    Value::Array(items) if items.iter().all(is_anthropic_content_block) => output.clone(),
-    _ => Value::Array(vec![json!({
-      "type": "text",
-      "text": stringify_json(output),
-    })]),
-  }
-}
-
-fn core_content_to_anthropic(content: &CoreContent) -> Value {
-  match content {
-    CoreContent::Text { text } => json!({
-      "type": "text",
-      "text": text,
-    }),
-    CoreContent::Reasoning { text, signature } => json!({
-      "type": "thinking",
-      "thinking": text,
-      "signature": signature,
-    }),
-    CoreContent::ToolCall {
-      call_id,
-      name,
-      arguments,
-      thought: _,
-    } => json!({
-      "type": "tool_use",
-      "id": call_id,
-      "name": name,
-      "input": arguments,
-    }),
-    CoreContent::ToolResult {
-      call_id,
-      output,
-      is_error,
-    } => {
-      let mut block = Map::from_iter([
-        ("type".to_string(), Value::String("tool_result".to_string())),
-        ("tool_use_id".to_string(), Value::String(call_id.clone())),
-        ("content".to_string(), tool_result_content_to_anthropic(output)),
-      ]);
-      if let Some(is_error) = is_error {
-        block.insert("is_error".to_string(), Value::Bool(*is_error));
-      }
-      Value::Object(block)
-    }
-    CoreContent::Image { source } => json!({
-      "type": "image",
-      "source": normalize_image_source_to_anthropic(source),
-    }),
-  }
-}
-
 fn core_message_to_anthropic(message: &CoreMessage) -> Value {
   let role = if message.role == CoreRole::Tool {
     "user"
@@ -307,7 +104,7 @@ fn core_message_to_anthropic(message: &CoreMessage) -> Value {
   let content = message
     .content
     .iter()
-    .map(core_content_to_anthropic)
+    .map(|content| core_content_to_anthropic(content, false))
     .collect::<Vec<_>>();
   json!({
     "role": role,
@@ -329,7 +126,7 @@ pub fn decode(request: &Value) -> Result<CoreRequest, ProtocolError> {
 
   let mut messages = Vec::new();
   if let Some(system) = request.system {
-    let content = parse_content_blocks(system)?;
+    let content = parse_content_blocks(system, AnthropicContentParseMode::Request)?;
     if !content.is_empty() {
       messages.push(CoreMessage {
         role: CoreRole::System,
@@ -340,7 +137,7 @@ pub fn decode(request: &Value) -> Result<CoreRequest, ProtocolError> {
 
   for message in request.messages {
     let mut role = parse_role(&message.role, "role")?;
-    let content = parse_content_blocks(message.content)?;
+    let content = parse_content_blocks(message.content, AnthropicContentParseMode::Request)?;
     if content
       .iter()
       .any(|block| matches!(block, CoreContent::ToolResult { .. }))
@@ -371,6 +168,7 @@ pub fn decode(request: &Value) -> Result<CoreRequest, ProtocolError> {
     tool_choice: parse_tool_choice(request.tool_choice)?,
     include: None,
     reasoning: request.thinking,
+    response_schema: None,
   })
 }
 
@@ -380,7 +178,12 @@ pub fn encode(request: &CoreRequest, stream: bool) -> Value {
   let mut messages = Vec::new();
   for message in &request.messages {
     if message.role == CoreRole::System {
-      system_content.extend(message.content.iter().map(core_content_to_anthropic));
+      system_content.extend(
+        message
+          .content
+          .iter()
+          .map(|content| core_content_to_anthropic(content, false)),
+      );
     } else {
       messages.push(core_message_to_anthropic(message));
     }
@@ -527,6 +330,7 @@ mod tests {
       tool_choice: None,
       include: None,
       reasoning: None,
+      response_schema: None,
     };
 
     let payload = encode(&request, false);
@@ -660,6 +464,51 @@ mod tests {
     }
   }
 
+  #[test]
+  fn encode_should_emit_document_blocks_for_file_content() {
+    let request = request_with_single_content(
+      CoreRole::User,
+      CoreContent::File {
+        source: json!({
+          "url": "https://example.com/manual.pdf",
+          "media_type": "application/pdf"
+        }),
+      },
+    );
+
+    let payload = encode(&request, false);
+
+    assert_eq!(payload["messages"][0]["content"][0]["type"], "document");
+    assert_eq!(
+      payload["messages"][0]["content"][0]["source"]["url"],
+      "https://example.com/manual.pdf"
+    );
+  }
+
+  #[test]
+  fn decode_should_preserve_document_blocks() {
+    let core = decode(&json!({
+      "model": "claude-sonnet-4-5-20250929",
+      "messages": [{
+        "role": "user",
+        "content": [{
+          "type": "document",
+          "source": {
+            "type": "base64",
+            "media_type": "application/pdf",
+            "data": "Zm9v"
+          }
+        }]
+      }]
+    }))
+    .unwrap();
+
+    assert!(matches!(
+      &core.messages[0].content[0],
+      CoreContent::File { source } if source["media_type"] == "application/pdf" && source["data"] == "Zm9v"
+    ));
+  }
+
   fn request_with_single_content(role: CoreRole, content: CoreContent) -> CoreRequest {
     CoreRequest {
       model: "claude-sonnet-4-5-20250929".to_string(),
@@ -674,6 +523,7 @@ mod tests {
       tool_choice: None,
       include: None,
       reasoning: None,
+      response_schema: None,
     }
   }
 }

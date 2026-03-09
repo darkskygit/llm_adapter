@@ -3,8 +3,8 @@ use serde_json::Value;
 
 use super::{
   CoreContent, CoreMessage, CoreRequest, CoreRole, OpenaiDecodeRequestInput, OpenaiRequestFlavor, OpenaiTool,
-  ProtocolError, decode_openai_request, encode_openai_request, messages_from_core, parse_content, parse_role,
-  parse_tool_calls, tool_result_content,
+  ProtocolError, decode_openai_request, encode_openai_request, messages_from_core, parse_message_content, parse_role,
+  tool_result_content,
 };
 
 #[derive(Debug, Deserialize)]
@@ -43,13 +43,15 @@ fn parse_input_item(item: Value) -> Result<CoreMessage, ProtocolError> {
         _ => return Err(ProtocolError::MissingField("input[].role")),
       };
       let content_field = object.get("content").cloned();
-      let mut content = parse_content(content_field.clone())?;
-
-      if let Some(Value::String(tool_call_id)) = object.get("tool_call_id") {
-        content = vec![tool_result_content(tool_call_id.clone(), content_field)];
-      } else if let Some(raw_tool_calls) = object.get("tool_calls") {
-        content.extend(parse_tool_calls(raw_tool_calls, "input[].tool_calls[].id|call_id")?);
-      }
+      let content = parse_message_content(
+        content_field,
+        object
+          .get("tool_call_id")
+          .and_then(Value::as_str)
+          .map(ToString::to_string),
+        object.get("tool_calls").cloned(),
+        "input[].tool_calls[].id|call_id",
+      )?;
 
       Ok(CoreMessage { role, content })
     }
@@ -232,6 +234,7 @@ mod tests {
       }),
       include: Some(vec!["reasoning".to_string()]),
       reasoning: Some(json!({ "effort": "medium" })),
+      response_schema: None,
     };
 
     let payload = encode(&core, true);
@@ -247,5 +250,94 @@ mod tests {
     assert_eq!(payload["tools"][0]["name"], "doc_read");
     assert_eq!(payload["tool_choice"]["name"], Value::String("doc_read".to_string()));
     assert_eq!(payload["reasoning"]["effort"], "medium");
+  }
+
+  #[test]
+  fn decode_should_preserve_file_inputs() {
+    let core = decode(&json!({
+      "model": "gpt-4.1",
+      "input": [{
+        "role": "user",
+        "content": [{
+          "type": "input_file",
+          "file_url": "https://example.com/manual.pdf",
+          "filename": "manual.pdf"
+        }]
+      }]
+    }))
+    .unwrap();
+
+    assert!(matches!(
+      &core.messages[0].content[0],
+      CoreContent::File { source } if source["url"] == "https://example.com/manual.pdf" && source["filename"] == "manual.pdf"
+    ));
+  }
+
+  #[test]
+  fn encode_should_emit_file_parts_for_responses() {
+    let core = CoreRequest {
+      model: "gpt-4.1".to_string(),
+      messages: vec![CoreMessage {
+        role: CoreRole::User,
+        content: vec![CoreContent::File {
+          source: json!({
+            "url": "https://example.com/manual.pdf",
+            "filename": "manual.pdf",
+            "media_type": "application/pdf"
+          }),
+        }],
+      }],
+      stream: false,
+      max_tokens: None,
+      temperature: None,
+      tools: vec![],
+      tool_choice: None,
+      include: None,
+      reasoning: None,
+      response_schema: None,
+    };
+
+    let payload = encode(&core, false);
+
+    assert_eq!(payload["input"][0]["content"][0]["type"], "input_file");
+    assert_eq!(
+      payload["input"][0]["content"][0]["file_url"],
+      "https://example.com/manual.pdf"
+    );
+  }
+
+  #[test]
+  fn encode_should_emit_text_format_for_structured_outputs() {
+    let payload = encode(
+      &CoreRequest {
+        model: "gpt-4.1".to_string(),
+        messages: vec![CoreMessage {
+          role: CoreRole::User,
+          content: vec![CoreContent::Text {
+            text: "Summarize AFFiNE.".to_string(),
+          }],
+        }],
+        stream: false,
+        max_tokens: Some(64),
+        temperature: None,
+        tools: vec![],
+        tool_choice: None,
+        include: None,
+        reasoning: None,
+        response_schema: Some(json!({
+          "type": "object",
+          "properties": {
+            "summary": { "type": "string" }
+          },
+          "required": ["summary"],
+          "additionalProperties": false
+        })),
+      },
+      false,
+    );
+
+    assert_eq!(payload["text"]["format"]["type"], "json_schema");
+    assert_eq!(payload["text"]["format"]["name"], "structured_output");
+    assert_eq!(payload["text"]["format"]["schema"]["required"], json!(["summary"]));
   }
 }

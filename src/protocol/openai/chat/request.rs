@@ -3,8 +3,7 @@ use serde_json::Value;
 
 use super::{
   CoreMessage, CoreRequest, OpenaiDecodeRequestInput, OpenaiRequestFlavor, OpenaiTool, ProtocolError,
-  decode_openai_request, encode_openai_request, messages_from_core, parse_content, parse_role, parse_tool_calls,
-  tool_result_content,
+  decode_openai_request, encode_openai_request, messages_from_core, parse_message_content, parse_role,
 };
 
 #[derive(Debug, Deserialize)]
@@ -38,15 +37,12 @@ pub fn decode(request: &Value) -> Result<CoreRequest, ProtocolError> {
   let mut messages = Vec::with_capacity(request.messages.len());
   for message in request.messages {
     let role = parse_role(&message.role, "role")?;
-    let content = if let Some(call_id) = message.tool_call_id {
-      vec![tool_result_content(call_id, message.content)]
-    } else {
-      let mut content = parse_content(message.content)?;
-      if let Some(raw_tool_calls) = message.tool_calls {
-        content.extend(parse_tool_calls(&raw_tool_calls, "tool_calls[].id|call_id")?);
-      }
-      content
-    };
+    let content = parse_message_content(
+      message.content,
+      message.tool_call_id,
+      message.tool_calls,
+      "tool_calls[].id|call_id",
+    )?;
 
     messages.push(CoreMessage { role, content });
   }
@@ -244,6 +240,7 @@ mod tests {
       tool_choice: Some(CoreToolChoice::Mode(CoreToolChoiceMode::Auto)),
       include: Some(vec!["reasoning".to_string()]),
       reasoning: Some(json!({ "effort": "medium" })),
+      response_schema: None,
     };
 
     let payload = encode(&core, true);
@@ -263,5 +260,103 @@ mod tests {
       "{\"docId\":\"a1\"}"
     );
     assert_eq!(payload["reasoning_effort"], "medium");
+  }
+
+  #[test]
+  fn decode_should_preserve_audio_input_parts() {
+    let core = decode(&json!({
+      "model": "gpt-audio",
+      "messages": [{
+        "role": "user",
+        "content": [
+          { "type": "text", "text": "What is in this recording?" },
+          {
+            "type": "input_audio",
+            "input_audio": {
+              "data": "Zm9v",
+              "format": "wav"
+            }
+          }
+        ]
+      }]
+    }))
+    .unwrap();
+
+    assert!(matches!(
+      &core.messages[0].content[1],
+      CoreContent::Audio { source } if source["media_type"] == "audio/wav" && source["data"] == "Zm9v"
+    ));
+  }
+
+  #[test]
+  fn encode_should_emit_audio_parts_for_chat_completions() {
+    let core = CoreRequest {
+      model: "gpt-audio".to_string(),
+      messages: vec![CoreMessage {
+        role: CoreRole::User,
+        content: vec![
+          CoreContent::Text {
+            text: "What is in this recording?".to_string(),
+          },
+          CoreContent::Audio {
+            source: json!({
+              "data": "Zm9v",
+              "media_type": "audio/wav"
+            }),
+          },
+        ],
+      }],
+      stream: false,
+      max_tokens: None,
+      temperature: None,
+      tools: vec![],
+      tool_choice: None,
+      include: None,
+      reasoning: None,
+      response_schema: None,
+    };
+
+    let payload = encode(&core, false);
+
+    assert_eq!(payload["messages"][0]["content"][1]["type"], "input_audio");
+    assert_eq!(payload["messages"][0]["content"][1]["input_audio"]["format"], "wav");
+  }
+
+  #[test]
+  fn encode_should_emit_response_format_for_structured_outputs() {
+    let payload = encode(
+      &CoreRequest {
+        model: "gpt-4.1".to_string(),
+        messages: vec![CoreMessage {
+          role: CoreRole::User,
+          content: vec![CoreContent::Text {
+            text: "Summarize AFFiNE.".to_string(),
+          }],
+        }],
+        stream: false,
+        max_tokens: Some(64),
+        temperature: None,
+        tools: vec![],
+        tool_choice: None,
+        include: None,
+        reasoning: None,
+        response_schema: Some(json!({
+          "type": "object",
+          "properties": {
+            "summary": { "type": "string" }
+          },
+          "required": ["summary"],
+          "additionalProperties": false
+        })),
+      },
+      false,
+    );
+
+    assert_eq!(payload["response_format"]["type"], "json_schema");
+    assert_eq!(payload["response_format"]["json_schema"]["name"], "structured_output");
+    assert_eq!(
+      payload["response_format"]["json_schema"]["schema"]["required"],
+      json!(["summary"])
+    );
   }
 }

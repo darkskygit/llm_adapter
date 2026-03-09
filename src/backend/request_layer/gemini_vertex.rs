@@ -22,6 +22,53 @@ impl RequestLayerImpl for GeminiVertexRequestLayer {
     }
     body
   }
+
+  fn build_embedding_url(&self, base_url: &str, model: &str) -> Result<String, crate::backend::BackendError> {
+    Ok(build_gemini_vertex_embedding_url(base_url, model))
+  }
+
+  fn rewrite_embedding_body(&self, body: Value) -> Value {
+    let Value::Object(payload) = body else {
+      return body;
+    };
+
+    let dimensions = payload.get("dimensions").and_then(Value::as_u64);
+    let task_type = payload
+      .get("task_type")
+      .and_then(Value::as_str)
+      .map(ToString::to_string);
+    let inputs = payload
+      .get("inputs")
+      .and_then(Value::as_array)
+      .cloned()
+      .unwrap_or_default();
+
+    let mut parameters = serde_json::Map::new();
+    if let Some(dimensions) = dimensions {
+      parameters.insert("outputDimensionality".to_string(), Value::Number(dimensions.into()));
+    }
+    parameters.insert("autoTruncate".to_string(), Value::Bool(true));
+
+    Value::Object(serde_json::Map::from_iter([
+      (
+        "instances".to_string(),
+        Value::Array(
+          inputs
+            .into_iter()
+            .filter_map(|value| {
+              let text = value.as_str()?.to_string();
+              let mut instance = serde_json::Map::from_iter([("content".to_string(), Value::String(text))]);
+              if let Some(task_type) = &task_type {
+                instance.insert("task_type".to_string(), Value::String(task_type.clone()));
+              }
+              Some(Value::Object(instance))
+            })
+            .collect(),
+        ),
+      ),
+      ("parameters".to_string(), Value::Object(parameters)),
+    ]))
+  }
 }
 
 fn build_gemini_vertex_url(base_url: &str, model: &str, stream: bool) -> String {
@@ -47,4 +94,17 @@ fn build_gemini_vertex_url(base_url: &str, model: &str, stream: bool) -> String 
   }
 
   url
+}
+
+fn build_gemini_vertex_embedding_url(base_url: &str, model: &str) -> String {
+  let base_url = base_url.trim_end_matches('/');
+  if base_url.ends_with(":predict") {
+    base_url.to_string()
+  } else if base_url.contains("/models/") {
+    format!("{base_url}:predict")
+  } else if base_url.ends_with("/models") {
+    format!("{base_url}/{model}:predict")
+  } else {
+    format!("{base_url}/models/{model}:predict")
+  }
 }

@@ -1,7 +1,8 @@
 use serde_json::Value;
 
 use super::{
-  CoreContent, CoreMessage, CoreRole, CoreUsage, ProtocolError, get_cached_tokens, get_u32_or, stringify_json,
+  CoreAttachmentKind, CoreContent, CoreMessage, CoreRole, CoreUsage, ProtocolError, get_cached_tokens, get_u32_or,
+  stringify_json,
 };
 
 pub(crate) fn parse_role(role: &str, field: &'static str) -> Result<CoreRole, ProtocolError> {
@@ -35,6 +36,40 @@ pub(crate) fn core_role_to_string(role: &CoreRole) -> &'static str {
   }
 }
 
+pub(crate) fn infer_media_type_from_url(url: &str) -> &'static str {
+  let normalized = url.split('?').next().unwrap_or(url).to_ascii_lowercase();
+
+  if normalized.ends_with(".png") {
+    "image/png"
+  } else if normalized.ends_with(".jpg") || normalized.ends_with(".jpeg") {
+    "image/jpeg"
+  } else if normalized.ends_with(".webp") {
+    "image/webp"
+  } else if normalized.ends_with(".gif") {
+    "image/gif"
+  } else if normalized.ends_with(".bmp") {
+    "image/bmp"
+  } else if normalized.ends_with(".svg") {
+    "image/svg+xml"
+  } else if normalized.ends_with(".mp3") {
+    "audio/mpeg"
+  } else if normalized.ends_with(".wav") {
+    "audio/wav"
+  } else if normalized.ends_with(".m4a") {
+    "audio/mp4"
+  } else if normalized.ends_with(".ogg") || normalized.ends_with(".oga") {
+    "audio/ogg"
+  } else if normalized.ends_with(".aac") {
+    "audio/aac"
+  } else if normalized.ends_with(".flac") {
+    "audio/flac"
+  } else if normalized.ends_with(".pdf") {
+    "application/pdf"
+  } else {
+    "application/octet-stream"
+  }
+}
+
 pub(crate) fn message_token_estimate(message: &CoreMessage) -> u32 {
   let mut text = String::new();
   for content in &message.content {
@@ -46,106 +81,91 @@ pub(crate) fn message_token_estimate(message: &CoreMessage) -> u32 {
         text.push_str(&stringify_json(arguments));
       }
       CoreContent::ToolResult { output, .. } => text.push_str(&stringify_json(output)),
-      CoreContent::Image { .. } => {}
+      CoreContent::Image { .. } | CoreContent::Audio { .. } | CoreContent::File { .. } => {}
     }
   }
   let chars = text.chars().count() as u32;
   (chars / 4).max(1)
 }
 
-pub(crate) fn parse_text_or_array_content(value: Option<Value>) -> Result<Vec<CoreContent>, ProtocolError> {
-  let Some(value) = value else {
-    return Ok(Vec::new());
-  };
-
-  match value {
-    Value::String(text) => Ok(vec![CoreContent::Text { text }]),
-    Value::Array(items) => {
-      let mut content = Vec::new();
-      for item in items {
-        match item {
-          Value::String(text) => content.push(CoreContent::Text { text }),
-          Value::Object(object) => {
-            if let Some(Value::String(typ)) = object.get("type") {
-              match typ.as_str() {
-                "text" | "input_text" | "output_text" => {
-                  if let Some(Value::String(text)) = object.get("text") {
-                    content.push(CoreContent::Text { text: text.clone() });
-                  }
-                }
-                "image_url" => {
-                  let source = match object.get("image_url") {
-                    Some(Value::String(url)) => {
-                      let mut source = serde_json::Map::new();
-                      source.insert("url".to_string(), Value::String(url.clone()));
-                      Value::Object(source)
-                    }
-                    Some(value) => value.clone(),
-                    None => Value::Object(object.clone()),
-                  };
-                  content.push(CoreContent::Image { source });
-                }
-                "input_image" => {
-                  let mut source = serde_json::Map::new();
-                  if let Some(image_url) = object.get("image_url") {
-                    match image_url {
-                      Value::String(url) => {
-                        source.insert("url".to_string(), Value::String(url.clone()));
-                      }
-                      Value::Object(image_url_object) => {
-                        if let Some(url) = image_url_object.get("url") {
-                          source.insert("url".to_string(), url.clone());
-                        }
-                        for (key, value) in image_url_object {
-                          if key != "url" {
-                            source.insert(key.clone(), value.clone());
-                          }
-                        }
-                      }
-                      _ => {
-                        source.insert("image_url".to_string(), image_url.clone());
-                      }
-                    }
-                  }
-                  if let Some(file_id) = object.get("file_id") {
-                    source.insert("file_id".to_string(), file_id.clone());
-                  }
-                  if let Some(detail) = object.get("detail") {
-                    source.insert("detail".to_string(), detail.clone());
-                  }
-                  if source.is_empty() {
-                    for (key, value) in &object {
-                      if key != "type" {
-                        source.insert(key.clone(), value.clone());
-                      }
-                    }
-                  }
-                  let source = Value::Object(source);
-                  content.push(CoreContent::Image { source });
-                }
-                "image" => {
-                  let source = object
-                    .get("source")
-                    .cloned()
-                    .unwrap_or_else(|| Value::Object(object.clone()));
-                  content.push(CoreContent::Image { source });
-                }
-                _ => {}
-              }
-            } else if let Some(Value::String(text)) = object.get("text") {
-              content.push(CoreContent::Text { text: text.clone() });
-            }
-          }
-          _ => {}
-        }
-      }
-      Ok(content)
-    }
-    _ => Err(ProtocolError::InvalidValue {
-      field: "content",
-      message: "expected string or array".to_string(),
-    }),
+fn source_media_type(source: &Value) -> Option<String> {
+  if let Some(media_type) = source
+    .as_object()
+    .and_then(|object| {
+      object
+        .get("media_type")
+        .or_else(|| object.get("mime_type"))
+        .or_else(|| object.get("mimeType"))
+    })
+    .and_then(Value::as_str)
+  {
+    return Some(
+      media_type
+        .split(';')
+        .next()
+        .unwrap_or(media_type)
+        .trim()
+        .to_ascii_lowercase(),
+    );
   }
+
+  let url = match source {
+    Value::String(url) => Some(url.as_str()),
+    Value::Object(object) => object.get("url").and_then(Value::as_str),
+    _ => None,
+  }?;
+  let data_url = url.strip_prefix("data:")?;
+  let (meta, _) = data_url.split_once(',')?;
+  Some(
+    meta
+      .split(';')
+      .next()
+      .unwrap_or("application/octet-stream")
+      .trim()
+      .to_ascii_lowercase(),
+  )
+}
+
+fn kind_from_url(url: &str) -> Option<CoreAttachmentKind> {
+  let normalized = url.split('?').next().unwrap_or(url).to_ascii_lowercase();
+  let media_type = infer_media_type_from_url(url);
+
+  if media_type.starts_with("image/") {
+    Some(CoreAttachmentKind::Image)
+  } else if media_type.starts_with("audio/") {
+    Some(CoreAttachmentKind::Audio)
+  } else if normalized.contains('.') {
+    Some(CoreAttachmentKind::File)
+  } else {
+    None
+  }
+}
+
+fn attachment_kind_from_source(source: &Value, default_kind: CoreAttachmentKind) -> CoreAttachmentKind {
+  if let Some(media_type) = source_media_type(source) {
+    if media_type.starts_with("image/") {
+      return CoreAttachmentKind::Image;
+    }
+    if media_type.starts_with("audio/") {
+      return CoreAttachmentKind::Audio;
+    }
+    return CoreAttachmentKind::File;
+  }
+
+  let url = match source {
+    Value::String(url) => Some(url.as_str()),
+    Value::Object(object) => object.get("url").and_then(Value::as_str),
+    _ => None,
+  };
+  url.and_then(kind_from_url).unwrap_or(default_kind)
+}
+
+pub(crate) fn attachment_content_from_source(source: Value, default_kind: CoreAttachmentKind) -> CoreContent {
+  CoreContent::from_attachment(attachment_kind_from_source(&source, default_kind), source)
+}
+
+pub(crate) fn attachment_source(content: &CoreContent) -> Option<(&Value, CoreAttachmentKind)> {
+  Some((content.attachment_source()?, content.attachment_kind()?))
 }
 
 pub(crate) fn usage_from_openai(usage: Option<&Value>, prompt_estimate: u32, completion_estimate: u32) -> CoreUsage {
@@ -253,5 +273,27 @@ pub(crate) fn usage_from_gemini(usage: Option<&Value>, prompt_estimate: u32, com
     completion_tokens,
     total_tokens,
     cached_tokens: (cached_tokens > 0).then_some(cached_tokens),
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use serde_json::json;
+
+  use super::*;
+
+  #[test]
+  fn should_infer_attachment_kind_from_media_type_and_url() {
+    let pdf = attachment_content_from_source(
+      json!({ "url": "https://example.com/manual.pdf" }),
+      CoreAttachmentKind::Image,
+    );
+    let audio = attachment_content_from_source(
+      json!({ "data": "Zm9v", "media_type": "audio/wav" }),
+      CoreAttachmentKind::File,
+    );
+
+    assert!(matches!(pdf, CoreContent::File { .. }));
+    assert!(matches!(audio, CoreContent::Audio { .. }));
   }
 }

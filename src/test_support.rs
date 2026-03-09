@@ -33,6 +33,7 @@ pub(crate) fn sample_request() -> CoreRequest {
     tool_choice: Some(CoreToolChoice::Mode(CoreToolChoiceMode::Auto)),
     include: Some(vec!["reasoning".to_string()]),
     reasoning: Some(json!({ "effort": "medium" })),
+    response_schema: None,
   }
 }
 
