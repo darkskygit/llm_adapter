@@ -749,4 +749,33 @@ mod tests {
         .is_none()
     );
   }
+
+  #[test]
+  fn encode_should_preserve_gcs_audio_urls_as_file_data() {
+    let request = CoreRequest {
+      model: "gemini-2.5-flash".to_string(),
+      messages: vec![CoreMessage {
+        role: CoreRole::User,
+        content: vec![CoreContent::Audio {
+          source: json!({ "url": "gs://bucket/audio.opus" }),
+        }],
+      }],
+      stream: false,
+      max_tokens: None,
+      temperature: None,
+      tools: vec![],
+      tool_choice: None,
+      include: None,
+      reasoning: None,
+      response_schema: None,
+    };
+
+    let payload = encode(&request, false);
+
+    assert_eq!(
+      payload["contents"][0]["parts"][0]["fileData"]["fileUri"],
+      "gs://bucket/audio.opus"
+    );
+    assert_eq!(payload["contents"][0]["parts"][0]["fileData"]["mimeType"], "audio/opus");
+  }
 }

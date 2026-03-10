@@ -342,7 +342,7 @@ fn should_dispatch_openai_rerank_request() {
 fn should_dispatch_openai_responses_stream() {
   let client = MockHttpClient::with_stream_responses(vec![MockHttpResponse::Stream(Ok(HttpStreamResponse {
     status: 200,
-    body: vec![
+    body: [
       sse_event(
         "response.created",
         json!({
@@ -417,7 +417,7 @@ fn should_dispatch_openai_responses_stream() {
 fn should_dispatch_stream_events_with_incrementally() {
   let client = MockHttpClient::with_stream_responses(vec![MockHttpResponse::Stream(Ok(HttpStreamResponse {
     status: 200,
-    body: vec![
+    body: [
       sse_event(
         "response.created",
         json!({
@@ -460,7 +460,7 @@ fn should_dispatch_stream_events_with_incrementally() {
 fn should_dispatch_stream_encoded_with_incrementally() {
   let client = MockHttpClient::with_stream_responses(vec![MockHttpResponse::Stream(Ok(HttpStreamResponse {
     status: 200,
-    body: vec![
+    body: [
       sse_event(
         "message_start",
         json!({
@@ -642,7 +642,7 @@ fn should_dispatch_vertex_anthropic_request() {
 fn should_dispatch_vertex_anthropic_stream() {
   let client = MockHttpClient::with_stream_responses(vec![MockHttpResponse::Stream(Ok(HttpStreamResponse {
     status: 200,
-    body: vec![
+    body: [
       sse_event(
         "message_start",
         json!({

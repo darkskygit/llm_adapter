@@ -11,7 +11,7 @@ use anyhow::{Context, Result, anyhow};
 use base64::Engine;
 use clap::{Parser, Subcommand};
 use llm_adapter::{
-  backend::{BackendConfig, BackendProtocol, BackendRequestLayer, ReqwestHttpClient, dispatch_request},
+  backend::{BackendConfig, BackendProtocol, BackendRequestLayer, DefaultHttpClient, dispatch_request},
   core::{CoreContent, CoreMessage, CoreRequest, CoreRole},
 };
 use rand::prelude::IndexedRandom;
@@ -418,16 +418,16 @@ fn resolve_token(explicit: &Option<String>, env_name: Option<&str>, default_env:
     return Ok(token.clone());
   }
 
-  if let Some(env_name) = env_name {
-    if let Ok(token) = std::env::var(env_name) {
-      return Ok(token);
-    }
+  if let Some(env_name) = env_name
+    && let Ok(token) = std::env::var(env_name)
+  {
+    return Ok(token);
   }
 
-  if let Some(env_name) = default_env {
-    if let Ok(token) = std::env::var(env_name) {
-      return Ok(token);
-    }
+  if let Some(env_name) = default_env
+    && let Ok(token) = std::env::var(env_name)
+  {
+    return Ok(token);
   }
 
   Ok(String::new())
@@ -729,7 +729,7 @@ struct BenchmarkRunner {
   config: BenchmarkConfig,
   provider: ResolvedProvider,
   prompt_manager: PromptManager,
-  client: Arc<ReqwestHttpClient>,
+  client: Arc<DefaultHttpClient>,
 }
 
 #[derive(Debug, Clone)]
@@ -774,7 +774,7 @@ impl BenchmarkRunner {
     }
 
     let prompt_manager = PromptManager::new(config.prompts.clone());
-    let client = Arc::new(ReqwestHttpClient::default());
+    let client = Arc::new(DefaultHttpClient::default());
 
     Ok(Self {
       config,
@@ -786,7 +786,7 @@ impl BenchmarkRunner {
 
   fn run(&self) -> Result<Vec<BenchmarkResult>> {
     if self.config.settings.user_agent.is_some() {
-      println!("Note: settings.user_agent is ignored by ReqwestHttpClient in llm_adapter.");
+      println!("Note: settings.user_agent is ignored by DefaultHttpClient in llm_adapter.");
     }
 
     println!("Starting benchmark with provider: {}", self.provider.name);
@@ -802,11 +802,11 @@ impl BenchmarkRunner {
         return Err(anyhow!("concurrency level cannot be 0"));
       }
 
-      if let Some(interval) = self.config.benchmark.test_interval_seconds {
-        if !results.is_empty() {
-          println!("Waiting {} seconds before next test...", interval);
-          thread::sleep(Duration::from_secs(interval));
-        }
+      if let Some(interval) = self.config.benchmark.test_interval_seconds
+        && !results.is_empty()
+      {
+        println!("Waiting {} seconds before next test...", interval);
+        thread::sleep(Duration::from_secs(interval));
       }
 
       let result = self.run_single_test(concurrency)?;
@@ -938,7 +938,7 @@ impl BenchmarkRunner {
 }
 
 fn worker_loop(
-  client: Arc<ReqwestHttpClient>,
+  client: Arc<DefaultHttpClient>,
   backend: BackendConfig,
   protocol: BackendProtocol,
   request: CoreRequest,

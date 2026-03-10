@@ -53,6 +53,8 @@ pub(crate) fn infer_media_type_from_url(url: &str) -> &'static str {
     "image/svg+xml"
   } else if normalized.ends_with(".mp3") {
     "audio/mpeg"
+  } else if normalized.ends_with(".opus") {
+    "audio/opus"
   } else if normalized.ends_with(".wav") {
     "audio/wav"
   } else if normalized.ends_with(".m4a") {

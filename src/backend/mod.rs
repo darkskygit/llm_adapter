@@ -3,7 +3,11 @@ mod dispatch;
 mod request_layer;
 mod types;
 
+pub use client::DefaultHttpClient;
+#[cfg(feature = "reqwest-client")]
 pub use client::ReqwestHttpClient;
+#[cfg(feature = "ureq-client")]
+pub use client::UreqHttpClient;
 pub use dispatch::{
   collect_stream_encoded, collect_stream_events, dispatch_embedding_request, dispatch_request, dispatch_rerank_request,
   dispatch_stream_encoded_with, dispatch_stream_events_with, dispatch_structured_request,

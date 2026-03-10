@@ -9,7 +9,7 @@ use anyhow::{Context, Result, anyhow};
 use clap::{Parser, Subcommand};
 use llm_adapter::{
   backend::{
-    BackendConfig, BackendProtocol, BackendRequestLayer, ReqwestHttpClient, collect_stream_events, dispatch_request,
+    BackendConfig, BackendProtocol, BackendRequestLayer, DefaultHttpClient, collect_stream_events, dispatch_request,
   },
   core::{CoreContent, CoreMessage, CoreRequest, CoreRole, CoreToolChoice, CoreToolChoiceMode, CoreToolDefinition},
 };
@@ -473,7 +473,7 @@ struct CompatibilityRunner {
   settings: CompatSettings,
   tests: TestSuiteConfig,
   providers: Vec<(String, ProviderConfig)>,
-  client: ReqwestHttpClient,
+  client: DefaultHttpClient,
 }
 
 impl CompatibilityRunner {
@@ -497,7 +497,7 @@ impl CompatibilityRunner {
       settings: config.settings,
       tests: config.tests,
       providers,
-      client: ReqwestHttpClient::default(),
+      client: DefaultHttpClient::default(),
     })
   }
 
@@ -750,6 +750,7 @@ impl CompatibilityRunner {
       tool_choice: None,
       include: None,
       reasoning: None,
+      response_schema: None,
     }
   }
 }
