@@ -24,7 +24,7 @@ Protocol codecs for:
 
 Endpoint shapes for:
 
-- OpenAI Chat Completions / Responses (`BackendRequestLayer::ChatCompletions`/`BackendRequestLayer::ChatCompletionsNoV1` / `BackendRequestLayer::Responses`)
+- OpenAI Chat Completions / Responses (`BackendRequestLayer::ChatCompletions`/`BackendRequestLayer::ChatCompletionsNoV1` / `BackendRequestLayer::CloudflareWorkersAi` / `BackendRequestLayer::Responses`)
 - Google Gemini (`BackendRequestLayer::GeminiApi`/`BackendRequestLayer::GeminiVertex`)
 - Anthropic (`BackendRequestLayer::Anthropic`/`BackendRequestLayer::VertexAnthropic`)
 

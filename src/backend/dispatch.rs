@@ -12,7 +12,7 @@ use super::{
       OpenaiResponsesStreamParser, SseFrame, SseFrameDecoder, StreamEncodingTarget, StreamParseError, encode_sse_frame,
     },
   },
-  BackendConfig, BackendError, BackendHttpClient, BackendProtocol, HttpRequest,
+  BackendConfig, BackendError, BackendHttpClient, BackendProtocol, BackendRequestLayer, HttpRequest,
   request_layer::{build_extra_headers, resolve_request_layer},
 };
 
@@ -219,12 +219,12 @@ fn build_embedding_http_request(
 }
 
 fn build_rerank_http_request(
+  request_layer: &BackendRequestLayer,
   config: &BackendConfig,
   protocol: &BackendProtocol,
   request: &RerankRequest,
   candidate_index: usize,
 ) -> Result<HttpRequest, BackendError> {
-  let request_layer = resolve_request_layer(config, protocol)?;
   let mut headers = request_layer.build_rerank_headers(config);
   headers.extend(build_extra_headers(config));
 
@@ -281,12 +281,23 @@ pub fn dispatch_rerank_request(
   request: &RerankRequest,
 ) -> Result<RerankResponse, BackendError> {
   request.validate().map_err(map_protocol_error)?;
+  let request_layer = resolve_request_layer(config, &protocol)?;
+
+  if let Some(response) = request_layer.dispatch_rerank(client, config, &protocol, request)? {
+    return Ok(response);
+  }
 
   let mut model: Option<String> = None;
   let mut scores = Vec::with_capacity(request.candidates.len());
 
   for candidate_index in 0..request.candidates.len() {
-    let response = client.post_json(build_rerank_http_request(config, &protocol, request, candidate_index)?)?;
+    let response = client.post_json(build_rerank_http_request(
+      &request_layer,
+      config,
+      &protocol,
+      request,
+      candidate_index,
+    )?)?;
     let (response_model, score) = protocol
       .decode_rerank_response(&response.body, request)
       .map_err(map_protocol_error)?;

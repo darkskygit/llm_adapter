@@ -20,6 +20,7 @@ pub enum BackendRequestLayer {
   Anthropic,
   ChatCompletions,
   ChatCompletionsNoV1,
+  CloudflareWorkersAi,
   GeminiApi,
   GeminiVertex,
   Responses,

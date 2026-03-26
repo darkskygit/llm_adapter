@@ -1,10 +1,12 @@
 use serde_json::Value;
 
-use super::{BackendConfig, BackendError, BackendProtocol, BackendRequestLayer};
+use super::{BackendConfig, BackendError, BackendHttpClient, BackendProtocol, BackendRequestLayer};
+use crate::core::{RerankRequest, RerankResponse};
 
 mod anthropic;
 mod anthropic_vertex;
 mod chat_completions;
+mod cloudflare_workers_ai;
 mod gemini_api;
 mod gemini_vertex;
 mod responses;
@@ -13,6 +15,7 @@ use self::{
   anthropic::AnthropicRequestLayer,
   anthropic_vertex::VertexAnthropicRequestLayer,
   chat_completions::{ChatCompletionsNoV1RequestLayer, ChatCompletionsRequestLayer},
+  cloudflare_workers_ai::CloudflareWorkersAiRequestLayer,
   gemini_api::GeminiApiRequestLayer,
   gemini_vertex::GeminiVertexRequestLayer,
   responses::ResponsesRequestLayer,
@@ -55,13 +58,24 @@ trait RequestLayerImpl {
   }
 
   fn rewrite_rerank_body(&self, body: Value) -> Value {
-    body
+    self.rewrite_body(body)
+  }
+
+  fn dispatch_rerank(
+    &self,
+    _client: &dyn BackendHttpClient,
+    _config: &BackendConfig,
+    _protocol: &BackendProtocol,
+    _request: &RerankRequest,
+  ) -> Result<Option<RerankResponse>, BackendError> {
+    Ok(None)
   }
 }
 
 const ANTHROPIC_LAYER: AnthropicRequestLayer = AnthropicRequestLayer;
 const CHAT_COMPLETIONS_LAYER: ChatCompletionsRequestLayer = ChatCompletionsRequestLayer;
 const CHAT_COMPLETIONS_NO_V1_LAYER: ChatCompletionsNoV1RequestLayer = ChatCompletionsNoV1RequestLayer;
+const CLOUDFLARE_WORKERS_AI_LAYER: CloudflareWorkersAiRequestLayer = CloudflareWorkersAiRequestLayer;
 const GEMINI_API_LAYER: GeminiApiRequestLayer = GeminiApiRequestLayer;
 const GEMINI_VERTEX_LAYER: GeminiVertexRequestLayer = GeminiVertexRequestLayer;
 const RESPONSES_LAYER: ResponsesRequestLayer = ResponsesRequestLayer;
@@ -97,6 +111,9 @@ impl BackendRequestLayer {
       ) | (
         BackendRequestLayer::ChatCompletionsNoV1,
         BackendProtocol::OpenaiChatCompletions
+      ) | (
+        BackendRequestLayer::CloudflareWorkersAi,
+        BackendProtocol::OpenaiChatCompletions
       ) | (BackendRequestLayer::Responses, BackendProtocol::OpenaiResponses)
         | (BackendRequestLayer::Anthropic, BackendProtocol::AnthropicMessages)
         | (BackendRequestLayer::VertexAnthropic, BackendProtocol::AnthropicMessages)
@@ -123,6 +140,7 @@ impl BackendRequestLayer {
       BackendRequestLayer::Anthropic => "anthropic",
       BackendRequestLayer::ChatCompletions => "chat_completions",
       BackendRequestLayer::ChatCompletionsNoV1 => "chat_completions_no_v1",
+      BackendRequestLayer::CloudflareWorkersAi => "cloudflare_workers_ai",
       BackendRequestLayer::GeminiApi => "gemini_api",
       BackendRequestLayer::GeminiVertex => "gemini_vertex",
       BackendRequestLayer::Responses => "responses",
@@ -135,6 +153,7 @@ impl BackendRequestLayer {
       BackendRequestLayer::Anthropic => &ANTHROPIC_LAYER,
       BackendRequestLayer::ChatCompletions => &CHAT_COMPLETIONS_LAYER,
       BackendRequestLayer::ChatCompletionsNoV1 => &CHAT_COMPLETIONS_NO_V1_LAYER,
+      BackendRequestLayer::CloudflareWorkersAi => &CLOUDFLARE_WORKERS_AI_LAYER,
       BackendRequestLayer::GeminiApi => &GEMINI_API_LAYER,
       BackendRequestLayer::GeminiVertex => &GEMINI_VERTEX_LAYER,
       BackendRequestLayer::Responses => &RESPONSES_LAYER,
@@ -176,6 +195,16 @@ impl BackendRequestLayer {
 
   pub(super) fn rewrite_rerank_body(&self, body: Value) -> Value {
     self.implementation().rewrite_rerank_body(body)
+  }
+
+  pub(super) fn dispatch_rerank(
+    &self,
+    client: &dyn BackendHttpClient,
+    config: &BackendConfig,
+    protocol: &BackendProtocol,
+    request: &RerankRequest,
+  ) -> Result<Option<RerankResponse>, BackendError> {
+    self.implementation().dispatch_rerank(client, config, protocol, request)
   }
 }
 

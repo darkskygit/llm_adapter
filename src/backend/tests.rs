@@ -339,6 +339,232 @@ fn should_dispatch_openai_rerank_request() {
 }
 
 #[test]
+fn should_dispatch_cloudflare_rerank_request() {
+  let client = MockHttpClient::with_json_responses(vec![
+    MockHttpResponse::Json(Ok(HttpResponse {
+      status: 200,
+      body: json!({
+        "model": "@cf/moonshotai/kimi-k2.5",
+        "choices": [{
+          "logprobs": {
+            "content": [{
+              "top_logprobs": [
+                { "token": "Yes", "logprob": -0.1 },
+                { "token": "No", "logprob": -2.0 }
+              ]
+            }]
+          }
+        }]
+      }),
+    })),
+    MockHttpResponse::Json(Ok(HttpResponse {
+      status: 200,
+      body: json!({
+        "model": "@cf/moonshotai/kimi-k2.5",
+        "choices": [{
+          "logprobs": {
+            "content": [{
+              "top_logprobs": [
+                { "token": "Yes", "logprob": -2.0 },
+                { "token": "No", "logprob": -0.1 }
+              ]
+            }]
+          }
+        }]
+      }),
+    })),
+  ]);
+
+  let mut config = sample_backend_config_with_header(false);
+  config.base_url = "https://api.cloudflare.com/client/v4/accounts/a1/ai".to_string();
+  config.request_layer = Some(BackendRequestLayer::CloudflareWorkersAi);
+
+  let response = dispatch_rerank_request(
+    &client,
+    &config,
+    BackendProtocol::OpenaiChatCompletions,
+    &RerankRequest {
+      model: "@cf/moonshotai/kimi-k2.5".to_string(),
+      query: "programming".to_string(),
+      candidates: vec![
+        RerankCandidate {
+          id: Some("rust".to_string()),
+          text: "Rust ownership guide".to_string(),
+        },
+        RerankCandidate {
+          id: Some("weather".to_string()),
+          text: "Sunny and warm tomorrow".to_string(),
+        },
+      ],
+      top_n: None,
+    },
+  )
+  .unwrap();
+
+  assert_eq!(response.model, "@cf/moonshotai/kimi-k2.5");
+  assert!(response.scores[0] > 0.8);
+  assert!(response.scores[1] < 0.2);
+
+  let requests = client.requests();
+  assert_eq!(requests.len(), 2);
+  assert_eq!(
+    requests[0].url,
+    "https://api.cloudflare.com/client/v4/accounts/a1/ai/v1/chat/completions"
+  );
+  assert_eq!(requests[0].body["logprobs"], true);
+  assert_eq!(requests[0].body["top_logprobs"], 5);
+  assert!(requests[0].body.get("chat_template_kwargs").is_none());
+}
+
+#[test]
+fn should_disable_thinking_for_cloudflare_logprobs_profiles() {
+  let client = MockHttpClient::with_json_responses(vec![MockHttpResponse::Json(Ok(HttpResponse {
+    status: 200,
+    body: json!({
+      "model": "@cf/zai-org/glm-4.7-flash",
+      "choices": [{
+        "logprobs": {
+          "content": [{
+            "top_logprobs": [
+              { "token": "Yes", "logprob": -0.1 },
+              { "token": "No", "logprob": -2.0 }
+            ]
+          }]
+        }
+      }]
+    }),
+  }))]);
+
+  let mut config = sample_backend_config_with_header(false);
+  config.base_url = "https://api.cloudflare.com/client/v4/accounts/a1/ai".to_string();
+  config.request_layer = Some(BackendRequestLayer::CloudflareWorkersAi);
+
+  let response = dispatch_rerank_request(
+    &client,
+    &config,
+    BackendProtocol::OpenaiChatCompletions,
+    &RerankRequest {
+      model: "@cf/zai-org/glm-4.7-flash".to_string(),
+      query: "programming".to_string(),
+      candidates: vec![RerankCandidate {
+        id: Some("rust".to_string()),
+        text: "Rust ownership guide".to_string(),
+      }],
+      top_n: None,
+    },
+  )
+  .unwrap();
+
+  assert_eq!(response.model, "@cf/zai-org/glm-4.7-flash");
+  assert_eq!(response.scores.len(), 1);
+
+  let requests = client.requests();
+  assert_eq!(requests.len(), 1);
+  assert_eq!(
+    requests[0].body["chat_template_kwargs"]["enable_thinking"],
+    Value::Bool(false)
+  );
+}
+
+#[test]
+fn should_dispatch_cloudflare_native_bge_rerank_request() {
+  let client = MockHttpClient::with_json_responses(vec![MockHttpResponse::Json(Ok(HttpResponse {
+    status: 200,
+    body: json!({
+      "result": {
+        "response": [
+          { "id": 1, "score": 0.12 },
+          { "id": 0, "score": 0.91 }
+        ]
+      }
+    }),
+  }))]);
+
+  let mut config = sample_backend_config_with_header(false);
+  config.base_url = "https://api.cloudflare.com/client/v4/accounts/a1/ai".to_string();
+  config.request_layer = Some(BackendRequestLayer::CloudflareWorkersAi);
+
+  let response = dispatch_rerank_request(
+    &client,
+    &config,
+    BackendProtocol::OpenaiChatCompletions,
+    &RerankRequest {
+      model: "@cf/baai/bge-reranker-base".to_string(),
+      query: "programming".to_string(),
+      candidates: vec![
+        RerankCandidate {
+          id: Some("rust".to_string()),
+          text: "Rust ownership guide".to_string(),
+        },
+        RerankCandidate {
+          id: Some("weather".to_string()),
+          text: "Sunny and warm tomorrow".to_string(),
+        },
+      ],
+      top_n: Some(1),
+    },
+  )
+  .unwrap();
+
+  assert_eq!(response.model, "@cf/baai/bge-reranker-base");
+  assert_eq!(response.scores, vec![0.91, 0.12]);
+
+  let requests = client.requests();
+  assert_eq!(requests.len(), 1);
+  assert_eq!(
+    requests[0].url,
+    "https://api.cloudflare.com/client/v4/accounts/a1/ai/run/@cf/baai/bge-reranker-base"
+  );
+  assert_eq!(requests[0].body["query"], "programming");
+  assert_eq!(requests[0].body["top_k"], 1);
+  assert_eq!(requests[0].body["contexts"][0]["text"], "Rust ownership guide");
+  assert_eq!(requests[0].body["contexts"][1]["text"], "Sunny and warm tomorrow");
+}
+
+#[test]
+fn should_reject_non_logprobs_rerank_protocols() {
+  let client = MockHttpClient::with_json_responses(vec![]);
+
+  let err = dispatch_rerank_request(
+    &client,
+    &sample_backend_config_with_header(false),
+    BackendProtocol::AnthropicMessages,
+    &RerankRequest {
+      model: "claude-sonnet-4-5-20250929".to_string(),
+      query: "programming".to_string(),
+      candidates: vec![RerankCandidate {
+        id: Some("rust".to_string()),
+        text: "Rust ownership guide".to_string(),
+      }],
+      top_n: None,
+    },
+  )
+  .unwrap_err();
+  assert!(matches!(err, BackendError::InvalidResponse("protocol")));
+
+  let mut gemini_config = sample_backend_config_with_header(false);
+  gemini_config.base_url = "https://generativelanguage.googleapis.com/v1beta".to_string();
+  gemini_config.request_layer = Some(BackendRequestLayer::GeminiApi);
+
+  let err = dispatch_rerank_request(
+    &client,
+    &gemini_config,
+    BackendProtocol::GeminiGenerateContent,
+    &RerankRequest {
+      model: "gemini-2.5-flash".to_string(),
+      query: "programming".to_string(),
+      candidates: vec![RerankCandidate {
+        id: Some("rust".to_string()),
+        text: "Rust ownership guide".to_string(),
+      }],
+      top_n: None,
+    },
+  )
+  .unwrap_err();
+  assert!(matches!(err, BackendError::InvalidResponse("protocol")));
+}
+
+#[test]
 fn should_dispatch_openai_responses_stream() {
   let client = MockHttpClient::with_stream_responses(vec![MockHttpResponse::Stream(Ok(HttpStreamResponse {
     status: 200,

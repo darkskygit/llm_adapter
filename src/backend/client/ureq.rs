@@ -2,8 +2,10 @@ use std::{io::Read, time::Duration};
 
 use ureq::{Agent, RequestBuilder};
 
-use super::super::{BackendError, BackendHttpClient, HttpRequest, HttpResponse};
-use super::shared::stream_utf8_chunks;
+use super::{
+  super::{BackendError, BackendHttpClient, HttpRequest, HttpResponse},
+  shared::stream_utf8_chunks,
+};
 
 #[derive(Debug, Clone)]
 pub struct UreqHttpClient {
@@ -36,10 +38,7 @@ impl BackendHttpClient for UreqHttpClient {
     }
 
     let body = serde_json::from_reader(response.body_mut().as_reader())?;
-    Ok(HttpResponse {
-      status,
-      body,
-    })
+    Ok(HttpResponse { status, body })
   }
 
   fn post_sse(
