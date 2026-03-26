@@ -259,7 +259,40 @@ mod tests {
       payload["messages"][1]["tool_calls"][0]["function"]["arguments"],
       "{\"docId\":\"a1\"}"
     );
+    assert_eq!(payload["messages"][1]["tool_calls"][0]["thought"], "need context");
     assert_eq!(payload["reasoning_effort"], "medium");
+  }
+
+  #[test]
+  fn encode_should_omit_null_tool_call_thought() {
+    let core = CoreRequest {
+      model: "mistral-medium".to_string(),
+      messages: vec![CoreMessage {
+        role: CoreRole::Assistant,
+        content: vec![CoreContent::ToolCall {
+          call_id: "call_42".to_string(),
+          name: "doc_read".to_string(),
+          arguments: json!({ "docId": "a1" }),
+          thought: None,
+        }],
+      }],
+      stream: false,
+      max_tokens: None,
+      temperature: None,
+      tools: Vec::new(),
+      tool_choice: None,
+      include: None,
+      reasoning: None,
+      response_schema: None,
+    };
+
+    let payload = encode(&core, false);
+
+    assert!(
+      payload["messages"][0]["tool_calls"][0]
+        .get("thought")
+        .is_none()
+    );
   }
 
   #[test]

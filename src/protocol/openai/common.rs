@@ -563,15 +563,18 @@ fn core_message_to_openai(message: &CoreMessage, flavor: OpenaiRequestFlavor) ->
         arguments,
         thought,
       } => {
-        tool_calls.push(json!({
+        let mut tool_call = json!({
           "id": call_id,
           "type": "function",
           "function": {
             "name": name,
             "arguments": stringify_json(arguments),
           },
-          "thought": thought,
-        }));
+        });
+        if let Some(thought) = thought {
+          tool_call["thought"] = json!(thought);
+        }
+        tool_calls.push(tool_call);
       }
       CoreContent::ToolResult {
         call_id,
