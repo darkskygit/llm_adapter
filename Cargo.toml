@@ -6,7 +6,7 @@ keywords    = ["llm", "language-model", "adapter", "api-client"]
 license     = "AGPL-3.0-only"
 name        = "llm_adapter"
 repository  = "https://github.com/darkskygit/llm_adapter"
-version     = "0.1.3"
+version     = "0.1.4"
 
 [features]
 benchmark-cli  = ["dep:anyhow", "dep:clap", "dep:rand", "dep:toml"]
