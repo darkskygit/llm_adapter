@@ -107,6 +107,25 @@ fn budget_to_effort(budget: u32) -> &'static str {
   }
 }
 
+fn is_gemini_3_model(model: &str) -> bool {
+  model.starts_with("gemini-3")
+}
+
+fn is_gemini_3_flash_family(model: &str) -> bool {
+  is_gemini_3_model(model) && model.contains("flash")
+}
+
+fn normalize_gemini_3_thinking_level(model: &str, level: &str) -> &'static str {
+  match level.to_ascii_lowercase().as_str() {
+    "minimal" if is_gemini_3_flash_family(model) => "minimal",
+    "medium" if is_gemini_3_flash_family(model) => "medium",
+    "low" | "minimal" | "medium" => "low",
+    "high" => "high",
+    _ if is_gemini_3_flash_family(model) => "minimal",
+    _ => "low",
+  }
+}
+
 fn decode_reasoning_config(generation_config: Option<&Value>) -> (Option<Vec<String>>, Option<Value>) {
   let Some(thinking_config) = generation_config.and_then(|value| value.get("thinkingConfig")) else {
     return (None, None);
@@ -370,13 +389,20 @@ pub fn encode(request: &CoreRequest, stream: bool) -> Value {
       thinking_config.insert("includeThoughts".to_string(), Value::Bool(true));
     }
     if let Some(reasoning) = &request.reasoning {
-      if let Some(budget_tokens) =
-        get_u32(reasoning, "budget_tokens").or_else(|| get_str(reasoning, "effort").and_then(effort_to_budget))
-      {
+      let budget_tokens =
+        get_u32(reasoning, "budget_tokens").or_else(|| get_str(reasoning, "effort").and_then(effort_to_budget));
+      let level = get_str(reasoning, "level")
+        .map(ToString::to_string)
+        .or_else(|| budget_tokens.map(|budget| budget_to_effort(budget).to_string()));
+      if is_gemini_3_model(&request.model) {
+        if let Some(level) = level {
+          thinking_config.insert(
+            "thinkingLevel".to_string(),
+            json!(normalize_gemini_3_thinking_level(&request.model, &level)),
+          );
+        }
+      } else if let Some(budget_tokens) = budget_tokens {
         thinking_config.insert("thinkingBudget".to_string(), json!(budget_tokens));
-      }
-      if let Some(level) = get_str(reasoning, "level") {
-        thinking_config.insert("thinkingLevel".to_string(), json!(level.to_ascii_uppercase()));
       }
     }
     generation_config.insert("thinkingConfig".to_string(), Value::Object(thinking_config));
@@ -748,6 +774,63 @@ mod tests {
         .get("additionalProperties")
         .is_none()
     );
+  }
+
+  #[test]
+  fn encode_should_use_lowercase_thinking_level_for_gemini_3_pro() {
+    let payload = encode(
+      &CoreRequest {
+        model: "gemini-3.1-pro-preview".to_string(),
+        messages: vec![CoreMessage {
+          role: CoreRole::User,
+          content: vec![CoreContent::Text {
+            text: "Rank this candidate.".to_string(),
+          }],
+        }],
+        stream: false,
+        max_tokens: Some(64),
+        temperature: None,
+        tools: vec![],
+        tool_choice: None,
+        include: None,
+        reasoning: Some(json!({ "budget_tokens": 256 })),
+        response_schema: None,
+      },
+      false,
+    );
+
+    assert_eq!(payload["generationConfig"]["thinkingConfig"]["thinkingLevel"], "low");
+    assert!(payload["generationConfig"]["thinkingConfig"]["thinkingBudget"].is_null());
+  }
+
+  #[test]
+  fn encode_should_keep_minimal_thinking_level_for_gemini_3_flash_family() {
+    let payload = encode(
+      &CoreRequest {
+        model: "gemini-3.1-flash-lite-preview".to_string(),
+        messages: vec![CoreMessage {
+          role: CoreRole::User,
+          content: vec![CoreContent::Text {
+            text: "Rank this candidate.".to_string(),
+          }],
+        }],
+        stream: false,
+        max_tokens: Some(64),
+        temperature: None,
+        tools: vec![],
+        tool_choice: None,
+        include: None,
+        reasoning: Some(json!({ "level": "minimal" })),
+        response_schema: None,
+      },
+      false,
+    );
+
+    assert_eq!(
+      payload["generationConfig"]["thinkingConfig"]["thinkingLevel"],
+      "minimal"
+    );
+    assert!(payload["generationConfig"]["thinkingConfig"]["thinkingBudget"].is_null());
   }
 
   #[test]
