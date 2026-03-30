@@ -73,6 +73,8 @@ pub enum BackendError {
   UpstreamStatus { status: u16, body: String },
   #[error("invalid response: {0}")]
   InvalidResponse(&'static str),
+  #[error("invalid_structured_output: {message}")]
+  InvalidStructuredOutput { message: String },
   #[error("json error: {0}")]
   Json(#[from] serde_json::Error),
   #[error(transparent)]

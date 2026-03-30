@@ -47,15 +47,22 @@ impl BackendProtocol {
     }
   }
 
-  fn decode_structured_response(&self, body: &Value) -> Result<StructuredResponse, ProtocolError> {
-    let response = self.decode_response(body)?;
-    let output_text = extract_text_output(&response)?;
-    let output_json = parse_structured_output(&output_text);
+  fn decode_structured_response(&self, body: &Value) -> Result<StructuredResponse, BackendError> {
+    let response = self.decode_response(body).map_err(map_protocol_error)?;
+    let output_text = extract_text_output(&response).map_err(map_protocol_error)?;
+    let output_json = parse_structured_output(&output_text).ok_or_else(|| {
+      BackendError::InvalidStructuredOutput {
+        message: format!(
+          "structured response did not contain valid JSON: {}",
+          truncate_structured_output_preview(&output_text)
+        ),
+      }
+    })?;
     Ok(StructuredResponse {
       id: response.id,
       model: response.model,
       output_text,
-      output_json,
+      output_json: Some(output_json),
       usage: response.usage,
       finish_reason: response.finish_reason,
       reasoning_details: response.reasoning_details,
@@ -259,9 +266,7 @@ pub fn dispatch_structured_request(
   request: &StructuredRequest,
 ) -> Result<StructuredResponse, BackendError> {
   let response = client.post_json(build_structured_http_request(config, &protocol, request)?)?;
-  protocol
-    .decode_structured_response(&response.body)
-    .map_err(map_protocol_error)
+  protocol.decode_structured_response(&response.body)
 }
 
 pub fn dispatch_embedding_request(
@@ -447,6 +452,21 @@ fn parse_structured_output(output_text: &str) -> Option<Value> {
   }
 
   None
+}
+
+fn truncate_structured_output_preview(output_text: &str) -> String {
+  const MAX_PREVIEW_CHARS: usize = 200;
+
+  let mut preview = String::new();
+  for ch in output_text.trim().chars().take(MAX_PREVIEW_CHARS) {
+    preview.push(ch);
+  }
+
+  if output_text.trim().chars().count() > MAX_PREVIEW_CHARS {
+    preview.push_str("...");
+  }
+
+  preview
 }
 
 fn structured_output_candidates(normalized: &str) -> [Option<&str>; 3] {

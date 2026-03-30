@@ -245,6 +245,68 @@ fn should_extract_output_json_from_fenced_structured_response() {
 }
 
 #[test]
+fn should_fail_structured_dispatch_with_typed_error_when_output_is_not_json() {
+  let client = MockHttpClient::with_json_responses(vec![MockHttpResponse::Json(Ok(HttpResponse {
+    status: 200,
+    body: json!({
+      "id": "resp_3",
+      "model": "gpt-4.1",
+      "output": [{
+        "type": "message",
+        "content": [{
+          "type": "output_text",
+          "text": "summary: AFFiNE"
+        }]
+      }],
+      "usage": {
+        "input_tokens": 12,
+        "output_tokens": 4,
+        "total_tokens": 16
+      }
+    }),
+  }))]);
+
+  let request = StructuredRequest {
+    model: "gpt-4.1".to_string(),
+    messages: vec![CoreMessage {
+      role: CoreRole::User,
+      content: vec![CoreContent::Text {
+        text: "Summarize AFFiNE.".to_string(),
+      }],
+    }],
+    schema: json!({
+      "type": "object",
+      "properties": {
+        "summary": { "type": "string" }
+      },
+      "required": ["summary"]
+    }),
+    max_tokens: Some(64),
+    temperature: None,
+    reasoning: None,
+    strict: Some(true),
+    response_mime_type: Some("application/json".to_string()),
+  };
+
+  let error = dispatch_structured_request(
+    &client,
+    &sample_backend_config_with_header(false),
+    BackendProtocol::OpenaiResponses,
+    &request,
+  )
+  .unwrap_err();
+
+  assert!(matches!(
+    error,
+    BackendError::InvalidStructuredOutput { .. }
+  ));
+  assert_eq!(
+    error.to_string(),
+    "invalid_structured_output: structured response did not contain valid JSON: summary: AFFiNE"
+  );
+}
+
+#[test]
 fn should_dispatch_gemini_embedding_request() {
   let client = MockHttpClient::with_json_responses(vec![MockHttpResponse::Json(Ok(HttpResponse {
     status: 200,

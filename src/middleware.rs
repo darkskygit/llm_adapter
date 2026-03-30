@@ -244,6 +244,15 @@ pub fn clamp_max_tokens(mut request: CoreRequest, config: &MiddlewareConfig) -> 
   request
 }
 
+#[must_use]
+pub fn openai_request_compat(mut request: CoreRequest, _config: &MiddlewareConfig) -> CoreRequest {
+  if request.model.to_ascii_lowercase().starts_with("gpt-5") {
+    request.temperature = None;
+  }
+
+  request
+}
+
 fn default_max_tokens_cap(model: &str) -> u32 {
   let normalized = model.to_ascii_lowercase();
 
@@ -795,6 +804,32 @@ mod tests {
       let clamped = clamp_max_tokens(case.request, &case.config);
       assert_eq!(clamped.max_tokens, case.expected_max_tokens, "{}", case.name);
     }
+  }
+
+  #[test]
+  fn should_apply_openai_request_compat_for_gpt_5_models() {
+    let request = CoreRequest {
+      model: "gpt-5.2".to_string(),
+      temperature: Some(0.7),
+      ..sample_request()
+    };
+
+    let normalized = openai_request_compat(request, &MiddlewareConfig::default());
+
+    assert_eq!(normalized.temperature, None);
+  }
+
+  #[test]
+  fn should_preserve_temperature_for_non_gpt_5_models() {
+    let request = CoreRequest {
+      model: "gpt-4.1".to_string(),
+      temperature: Some(0.7),
+      ..sample_request()
+    };
+
+    let normalized = openai_request_compat(request, &MiddlewareConfig::default());
+
+    assert_eq!(normalized.temperature, Some(0.7));
   }
 
   #[test]
