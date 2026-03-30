@@ -176,11 +176,72 @@ fn should_dispatch_openai_structured_request() {
   .unwrap();
 
   assert_eq!(response.output_text, "{\"summary\":\"AFFiNE\"}");
+  assert_eq!(response.output_json, Some(json!({ "summary": "AFFiNE" })));
   let requests = client.requests();
   assert_eq!(requests.len(), 1);
   assert_eq!(requests[0].url, "https://api.example.com/v1/responses");
   assert_eq!(requests[0].body["text"]["format"]["type"], "json_schema");
   assert_eq!(requests[0].body["text"]["format"]["schema"], request.schema);
+}
+
+#[test]
+fn should_extract_output_json_from_fenced_structured_response() {
+  let client = MockHttpClient::with_json_responses(vec![MockHttpResponse::Json(Ok(HttpResponse {
+    status: 200,
+    body: json!({
+      "id": "resp_2",
+      "model": "gpt-4.1",
+      "output": [{
+        "type": "message",
+        "content": [{
+          "type": "output_text",
+          "text": "```json\n{\"summary\":\"AFFiNE\"}\n```"
+        }]
+      }],
+      "usage": {
+        "input_tokens": 12,
+        "output_tokens": 4,
+        "total_tokens": 16
+      }
+    }),
+  }))]);
+
+  let request = StructuredRequest {
+    model: "gpt-4.1".to_string(),
+    messages: vec![CoreMessage {
+      role: CoreRole::User,
+      content: vec![CoreContent::Text {
+        text: "Summarize AFFiNE.".to_string(),
+      }],
+    }],
+    schema: json!({
+      "type": "object",
+      "properties": {
+        "summary": { "type": "string" }
+      },
+      "required": ["summary"]
+    }),
+    max_tokens: Some(64),
+    temperature: None,
+    reasoning: None,
+    strict: Some(true),
+    response_mime_type: Some("application/json".to_string()),
+  };
+
+  let response = dispatch_structured_request(
+    &client,
+    &sample_backend_config_with_header(false),
+    BackendProtocol::OpenaiResponses,
+    &request,
+  )
+  .unwrap();
+
+  assert_eq!(
+    response.output_json,
+    Some(json!({
+      "summary": "AFFiNE"
+    }))
+  );
 }
 
 #[test]

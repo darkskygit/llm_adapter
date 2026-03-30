@@ -50,10 +50,12 @@ impl BackendProtocol {
   fn decode_structured_response(&self, body: &Value) -> Result<StructuredResponse, ProtocolError> {
     let response = self.decode_response(body)?;
     let output_text = extract_text_output(&response)?;
+    let output_json = parse_structured_output(&output_text);
     Ok(StructuredResponse {
       id: response.id,
       model: response.model,
       output_text,
+      output_json,
       usage: response.usage,
       finish_reason: response.finish_reason,
       reasoning_details: response.reasoning_details,
@@ -431,4 +433,51 @@ fn extract_text_output(response: &CoreResponse) -> Result<String, ProtocolError>
   } else {
     Ok(text)
   }
+}
+
+fn parse_structured_output(output_text: &str) -> Option<Value> {
+  let normalized = normalize_structured_text(output_text);
+
+  for candidate in structured_output_candidates(&normalized) {
+    if let Some(candidate) = candidate
+      && let Ok(value) = serde_json::from_str::<Value>(candidate)
+    {
+      return Some(value);
+    }
+  }
+
+  None
+}
+
+fn structured_output_candidates(normalized: &str) -> [Option<&str>; 3] {
+  let object_slice = match (normalized.find('{'), normalized.rfind('}')) {
+    (Some(start), Some(end)) if end > start => Some(&normalized[start..=end]),
+    _ => None,
+  };
+  let array_slice = match (normalized.find('['), normalized.rfind(']')) {
+    (Some(start), Some(end)) if end > start => Some(&normalized[start..=end]),
+    _ => None,
+  };
+
+  [Some(normalized), object_slice, array_slice]
+}
+
+fn normalize_structured_text(output_text: &str) -> String {
+  let trimmed = output_text.trim();
+  let trimmed = trimmed.strip_prefix("ny\n").unwrap_or(trimmed).trim();
+  if trimmed.starts_with("```") || trimmed.ends_with("```") {
+    return strip_fenced_code_block(trimmed).trim().to_string();
+  }
+  trimmed.to_string()
+}
+
+fn strip_fenced_code_block(text: &str) -> &str {
+  let Some(without_open) = text.strip_prefix("```") else {
+    return text;
+  };
+  let without_language = match without_open.find('\n') {
+    Some(index) => &without_open[index + 1..],
+    None => without_open,
+  };
+  without_language.strip_suffix("\n```").unwrap_or(without_language)
 }

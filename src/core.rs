@@ -275,6 +275,8 @@ pub struct StructuredResponse {
   pub id: String,
   pub model: String,
   pub output_text: String,
+  #[serde(skip_serializing_if = "Option::is_none")]
+  pub output_json: Option<Value>,
   pub usage: CoreUsage,
   pub finish_reason: String,
   #[serde(skip_serializing_if = "Option::is_none")]
