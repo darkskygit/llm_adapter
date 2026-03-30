@@ -288,11 +288,7 @@ mod tests {
 
     let payload = encode(&core, false);
 
-    assert!(
-      payload["messages"][0]["tool_calls"][0]
-        .get("thought")
-        .is_none()
-    );
+    assert!(payload["messages"][0]["tool_calls"][0].get("thought").is_none());
   }
 
   #[test]

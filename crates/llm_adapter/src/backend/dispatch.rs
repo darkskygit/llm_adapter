@@ -50,13 +50,11 @@ impl BackendProtocol {
   fn decode_structured_response(&self, body: &Value) -> Result<StructuredResponse, BackendError> {
     let response = self.decode_response(body).map_err(map_protocol_error)?;
     let output_text = extract_text_output(&response).map_err(map_protocol_error)?;
-    let output_json = parse_structured_output(&output_text).ok_or_else(|| {
-      BackendError::InvalidStructuredOutput {
-        message: format!(
-          "structured response did not contain valid JSON: {}",
-          truncate_structured_output_preview(&output_text)
-        ),
-      }
+    let output_json = parse_structured_output(&output_text).ok_or_else(|| BackendError::InvalidStructuredOutput {
+      message: format!(
+        "structured response did not contain valid JSON: {}",
+        truncate_structured_output_preview(&output_text)
+      ),
     })?;
     Ok(StructuredResponse {
       id: response.id,

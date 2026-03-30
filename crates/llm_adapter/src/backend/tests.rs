@@ -296,10 +296,7 @@ fn should_fail_structured_dispatch_with_typed_error_when_output_is_not_json() {
   )
   .unwrap_err();
 
-  assert!(matches!(
-    error,
-    BackendError::InvalidStructuredOutput { .. }
-  ));
+  assert!(matches!(error, BackendError::InvalidStructuredOutput { .. }));
   assert_eq!(
     error.to_string(),
     "invalid_structured_output: structured response did not contain valid JSON: summary: AFFiNE"

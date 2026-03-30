@@ -1,44 +1,31 @@
-[package]
-authors     = ["DarkSky <darksky2048@gmail.com>"]
-description = "A Rust library for adapting various language model APIs to a unified interface."
-edition     = "2024"
-keywords    = ["llm", "language-model", "adapter", "api-client"]
-license     = "AGPL-3.0-only"
-name        = "llm_adapter"
-repository  = "https://github.com/darkskygit/llm_adapter"
-version     = "0.1.4"
+[workspace]
+default-members = ["crates/llm_adapter"]
+members         = ["crates/llm_adapter", "crates/llm_runtime"]
+resolver        = "3"
 
-[features]
-benchmark-cli  = ["dep:anyhow", "dep:clap", "dep:rand", "dep:toml"]
-default        = ["reqwest-client"]
-reqwest-client = ["dep:reqwest"]
-ureq-client    = ["dep:ureq"]
+    [workspace.package]
+    authors     = ["DarkSky <darksky2048@gmail.com>"]
+    description = "A Rust library for adapting various language model APIs to a unified interface."
+    edition     = "2024"
+    keywords    = ["llm", "language-model", "adapter", "api-client"]
+    license     = "AGPL-3.0-only"
+    repository  = "https://github.com/darkskygit/llm_adapter"
 
-[dependencies]
-anyhow = { version = "1", optional = true }
-base64 = "0.22"
-clap = { version = "4", features = ["derive"], optional = true }
-rand = { version = "0.10", optional = true }
-reqwest = { version = "0.13", default-features = false, features = [
-    "blocking",
-    "json",
-    "rustls",
-], optional = true }
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-thiserror = "2"
-toml = { version = "0.9", optional = true }
-ureq = { version = "3.2", default-features = false, features = [
-    "gzip",
-    "rustls",
-], optional = true }
-
-[[bin]]
-name              = "llm_benchmark"
-path              = "src/bin/llm_benchmark.rs"
-required-features = ["benchmark-cli"]
-
-[[bin]]
-name              = "llm_compat"
-path              = "src/bin/llm_compat.rs"
-required-features = ["benchmark-cli"]
+    [workspace.dependencies]
+    anyhow = "1"
+    base64 = "0.22"
+    clap = { version = "4", features = ["derive"] }
+    rand = "0.10"
+    reqwest = { version = "0.13", default-features = false, features = [
+        "blocking",
+        "json",
+        "rustls",
+    ] }
+    serde = { version = "1", features = ["derive"] }
+    serde_json = "1"
+    thiserror = "2"
+    toml = "0.9"
+    ureq = { version = "3.2", default-features = false, features = [
+        "gzip",
+        "rustls",
+    ] }

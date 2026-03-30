@@ -1,0 +1,21 @@
+[package]
+authors.workspace    = true
+description          = "Abstractions and primitives for building agents and runtimes on top of llm_adapter."
+edition.workspace    = true
+keywords.workspace   = true
+license.workspace    = true
+name                 = "llm_runtime"
+readme               = "../../README.md"
+repository.workspace = true
+version              = "0.1.0"
+
+[features]
+default        = ["reqwest-client"]
+reqwest-client = ["llm_adapter/reqwest-client"]
+ureq-client    = ["llm_adapter/ureq-client"]
+
+[dependencies]
+llm_adapter = { version = "0.1", default-features = false }
+serde       = { workspace = true }
+serde_json  = { workspace = true }
+thiserror   = { workspace = true }
