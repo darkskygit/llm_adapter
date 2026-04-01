@@ -19,6 +19,17 @@ pub struct ToolResultMessage {
   pub is_error: Option<bool>,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct ToolExecutionResult {
+  pub call_id: String,
+  pub name: String,
+  pub arguments: Value,
+  pub arguments_text: Option<String>,
+  pub arguments_error: Option<String>,
+  pub output: Value,
+  pub is_error: Option<bool>,
+}
+
 #[derive(Debug, Clone, Serialize, PartialEq)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ToolLoopEvent {

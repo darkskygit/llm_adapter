@@ -748,6 +748,7 @@ dependencies = [
  "thiserror 2.0.18",
  "toml",
  "ureq",
+ "url",
 ]
 
 [[package]]
