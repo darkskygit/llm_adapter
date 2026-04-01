@@ -1,3 +1,4 @@
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use super::{BackendConfig, BackendError, BackendHttpClient, BackendProtocol, BackendRequestLayer};
@@ -80,6 +81,13 @@ const GEMINI_API_LAYER: GeminiApiRequestLayer = GeminiApiRequestLayer;
 const GEMINI_VERTEX_LAYER: GeminiVertexRequestLayer = GeminiVertexRequestLayer;
 const RESPONSES_LAYER: ResponsesRequestLayer = ResponsesRequestLayer;
 const VERTEX_ANTHROPIC_LAYER: VertexAnthropicRequestLayer = VertexAnthropicRequestLayer;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AttachmentReferencePlan {
+  Remote,
+  Inline,
+}
 
 impl BackendProtocol {
   pub(super) fn as_str(&self) -> &'static str {
@@ -197,6 +205,25 @@ impl BackendRequestLayer {
     self.implementation().rewrite_rerank_body(body)
   }
 
+  pub fn plan_attachment_reference(&self, base_url: &str, source: &Value) -> AttachmentReferencePlan {
+    let url = match source {
+      Value::String(url) => Some(url.as_str()),
+      Value::Object(object) => object.get("url").and_then(Value::as_str),
+      _ => None,
+    };
+
+    let Some(url) = url else {
+      return AttachmentReferencePlan::Inline;
+    };
+
+    match self {
+      BackendRequestLayer::GeminiApi if should_inline_gemini_api_attachment(url, base_url) => {
+        AttachmentReferencePlan::Inline
+      }
+      _ => AttachmentReferencePlan::Remote,
+    }
+  }
+
   pub(super) fn dispatch_rerank(
     &self,
     client: &dyn BackendHttpClient,
@@ -217,6 +244,98 @@ pub(super) fn resolve_request_layer(
     .unwrap_or_else(|| BackendRequestLayer::from_protocol(protocol));
   request_layer.ensure_compatible(protocol)?;
   Ok(request_layer)
+}
+
+pub fn resolve_attachment_reference_plan(
+  config: &BackendConfig,
+  protocol: &BackendProtocol,
+  source: &Value,
+) -> Result<AttachmentReferencePlan, BackendError> {
+  let request_layer = resolve_request_layer(config, protocol)?;
+  Ok(request_layer.plan_attachment_reference(&config.base_url, source))
+}
+
+fn should_inline_gemini_api_attachment(url: &str, base_url: &str) -> bool {
+  let Ok(parsed) = url.parse::<url::Url>() else {
+    return false;
+  };
+
+  if !matches!(parsed.scheme(), "http" | "https") {
+    return false;
+  }
+
+  !(is_gemini_file_url(&parsed, base_url) || is_youtube_url(&parsed))
+}
+
+fn is_youtube_url(url: &url::Url) -> bool {
+  let hostname = url.host_str().unwrap_or_default().to_ascii_lowercase();
+  if hostname == "youtu.be" {
+    let path = url.path().trim_matches('/');
+    return !path.is_empty()
+      && path
+        .chars()
+        .all(|char| char.is_ascii_alphanumeric() || char == '-' || char == '_');
+  }
+
+  if hostname != "youtube.com" && hostname != "www.youtube.com" {
+    return false;
+  }
+
+  url.path() == "/watch" && url.query_pairs().any(|(key, value)| key == "v" && !value.is_empty())
+}
+
+fn is_gemini_file_url(url: &url::Url, base_url: &str) -> bool {
+  let Ok(base) = base_url.parse::<url::Url>() else {
+    return false;
+  };
+
+  if url.origin() != base.origin() {
+    return false;
+  }
+
+  let base_path = base.path().trim_end_matches('/');
+  let expected_prefix = format!("{base_path}/files/");
+  url.path().starts_with(&expected_prefix)
+}
+
+#[cfg(test)]
+mod tests {
+  use serde_json::json;
+
+  use super::{AttachmentReferencePlan, BackendRequestLayer};
+
+  #[test]
+  fn gemini_api_should_inline_generic_http_attachments() {
+    let plan = BackendRequestLayer::GeminiApi.plan_attachment_reference(
+      "https://generativelanguage.googleapis.com/v1beta",
+      &json!({ "url": "https://example.com/a.jpg" }),
+    );
+
+    assert_eq!(plan, AttachmentReferencePlan::Inline);
+  }
+
+  #[test]
+  fn gemini_api_should_preserve_supported_remote_refs() {
+    let base_url = "https://generativelanguage.googleapis.com/v1beta";
+
+    let file_plan = BackendRequestLayer::GeminiApi.plan_attachment_reference(
+      base_url,
+      &json!({ "url": "https://generativelanguage.googleapis.com/v1beta/files/file-123" }),
+    );
+    assert_eq!(file_plan, AttachmentReferencePlan::Remote);
+
+    let youtube_plan = BackendRequestLayer::GeminiApi
+      .plan_attachment_reference(base_url, &json!({ "url": "https://www.youtube.com/watch?v=abc123" }));
+    assert_eq!(youtube_plan, AttachmentReferencePlan::Remote);
+  }
+
+  #[test]
+  fn gemini_vertex_should_preserve_remote_http_attachments() {
+    let plan = BackendRequestLayer::GeminiVertex
+      .plan_attachment_reference("https://vertex.example", &json!({ "url": "https://example.com/a.jpg" }));
+
+    assert_eq!(plan, AttachmentReferencePlan::Remote);
+  }
 }
 
 pub(super) fn build_extra_headers(config: &BackendConfig) -> Vec<(String, String)> {

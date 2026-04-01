@@ -9,6 +9,7 @@ use super::{
   common::{attachment_source_to_part, get_string, get_value, parse_parts, tool_result_response},
   get_str, get_u32,
 };
+use crate::backend::BackendRequestLayer;
 
 #[derive(Debug, Deserialize)]
 struct GeminiRequest {
@@ -149,7 +150,12 @@ fn decode_reasoning_config(generation_config: Option<&Value>) -> (Option<Vec<Str
   (include, (!reasoning.is_empty()).then_some(Value::Object(reasoning)))
 }
 
-fn core_content_to_part(content: &CoreContent, tool_names: &mut HashMap<String, String>) -> Option<Value> {
+fn core_content_to_part(
+  content: &CoreContent,
+  tool_names: &mut HashMap<String, String>,
+  request_layer: BackendRequestLayer,
+  base_url: &str,
+) -> Option<Value> {
   match content {
     CoreContent::Text { text } => Some(json!({ "text": text })),
     CoreContent::Reasoning { text, signature } => {
@@ -186,13 +192,17 @@ fn core_content_to_part(content: &CoreContent, tool_names: &mut HashMap<String, 
         "response": tool_result_response(output, *is_error),
       }
     })),
-    CoreContent::Image { .. } | CoreContent::Audio { .. } | CoreContent::File { .. } => {
-      attachment_source(content).map(|(source, _)| attachment_source_to_part(source))
-    }
+    CoreContent::Image { .. } | CoreContent::Audio { .. } | CoreContent::File { .. } => attachment_source(content)
+      .map(|(source, _)| attachment_source_to_part(source, request_layer.plan_attachment_reference(base_url, source))),
   }
 }
 
-fn core_message_to_gemini(message: &CoreMessage, tool_names: &mut HashMap<String, String>) -> Option<Value> {
+fn core_message_to_gemini(
+  message: &CoreMessage,
+  tool_names: &mut HashMap<String, String>,
+  request_layer: BackendRequestLayer,
+  base_url: &str,
+) -> Option<Value> {
   let role = match message.role {
     CoreRole::Assistant => "model",
     CoreRole::User | CoreRole::Tool => "user",
@@ -202,7 +212,7 @@ fn core_message_to_gemini(message: &CoreMessage, tool_names: &mut HashMap<String
   let parts: Vec<Value> = message
     .content
     .iter()
-    .filter_map(|content| core_content_to_part(content, tool_names))
+    .filter_map(|content| core_content_to_part(content, tool_names, request_layer, base_url))
     .filter(|part| !part.is_null())
     .collect();
 
@@ -316,7 +326,7 @@ pub fn decode(request: &Value) -> Result<CoreRequest, ProtocolError> {
 }
 
 #[must_use]
-pub fn encode(request: &CoreRequest, stream: bool) -> Value {
+pub fn encode(request: &CoreRequest, stream: bool, request_layer: BackendRequestLayer, base_url: &str) -> Value {
   let mut payload = Map::from_iter([("model".to_string(), Value::String(request.model.clone()))]);
   let mut tool_names = HashMap::new();
 
@@ -328,10 +338,10 @@ pub fn encode(request: &CoreRequest, stream: bool) -> Value {
         message
           .content
           .iter()
-          .filter_map(|content| core_content_to_part(content, &mut tool_names))
+          .filter_map(|content| core_content_to_part(content, &mut tool_names, request_layer, base_url))
           .filter(|part| !part.is_null()),
       );
-    } else if let Some(content) = core_message_to_gemini(message, &mut tool_names) {
+    } else if let Some(content) = core_message_to_gemini(message, &mut tool_names, request_layer, base_url) {
       contents.push(content);
     }
   }
@@ -614,7 +624,12 @@ mod tests {
       response_schema: None,
     };
 
-    let payload = encode(&request, false);
+    let payload = encode(
+      &request,
+      false,
+      BackendRequestLayer::GeminiApi,
+      "https://generativelanguage.googleapis.com/v1beta",
+    );
 
     assert_eq!(payload["model"], "gemini-2.5-flash");
     assert_eq!(payload["systemInstruction"]["parts"][0]["text"], "You are concise.");
@@ -716,7 +731,12 @@ mod tests {
       response_schema: None,
     };
 
-    let payload = encode(&request, false);
+    let payload = encode(
+      &request,
+      false,
+      BackendRequestLayer::GeminiApi,
+      "https://generativelanguage.googleapis.com/v1beta",
+    );
 
     assert_eq!(
       payload["tools"][0]["functionDeclarations"][0]["parameters"],
@@ -762,6 +782,8 @@ mod tests {
         })),
       },
       false,
+      BackendRequestLayer::GeminiApi,
+      "https://generativelanguage.googleapis.com/v1beta",
     );
 
     assert_eq!(payload["generationConfig"]["responseMimeType"], "application/json");
@@ -797,6 +819,8 @@ mod tests {
         response_schema: None,
       },
       false,
+      BackendRequestLayer::GeminiApi,
+      "https://generativelanguage.googleapis.com/v1beta",
     );
 
     assert_eq!(payload["generationConfig"]["thinkingConfig"]["thinkingLevel"], "low");
@@ -824,6 +848,8 @@ mod tests {
         response_schema: None,
       },
       false,
+      BackendRequestLayer::GeminiApi,
+      "https://generativelanguage.googleapis.com/v1beta",
     );
 
     assert_eq!(
@@ -853,7 +879,12 @@ mod tests {
       response_schema: None,
     };
 
-    let payload = encode(&request, false);
+    let payload = encode(
+      &request,
+      false,
+      BackendRequestLayer::GeminiApi,
+      "https://generativelanguage.googleapis.com/v1beta",
+    );
 
     assert_eq!(
       payload["contents"][0]["parts"][0]["fileData"]["fileUri"],

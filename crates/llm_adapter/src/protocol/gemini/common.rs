@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use serde_json::{Map, Value, json};
 
 use super::{CoreAttachmentKind, CoreContent, CoreUsage, attachment_content_from_source, infer_media_type_from_url};
+use crate::backend::AttachmentReferencePlan;
 
 pub(crate) fn get_value<'a>(value: &'a Value, keys: &[&str]) -> Option<&'a Value> {
   keys.iter().find_map(|key| value.get(*key))
@@ -23,9 +24,65 @@ pub(crate) fn parse_function_response_output(value: &Value) -> (Value, Option<bo
   }
 }
 
-pub(crate) fn attachment_source_to_part(source: &Value) -> Value {
+pub(crate) fn attachment_source_to_part(source: &Value, plan: AttachmentReferencePlan) -> Value {
   match source {
     Value::Object(object) => {
+      let inline_part = || {
+        object
+          .get("media_type")
+          .and_then(Value::as_str)
+          .zip(object.get("data").and_then(Value::as_str))
+          .map(|(media_type, data)| {
+            json!({
+              "inlineData": {
+                "mimeType": media_type,
+                "data": data,
+              }
+            })
+          })
+          .or_else(|| {
+            object
+              .get("mimeType")
+              .and_then(Value::as_str)
+              .zip(object.get("data").and_then(Value::as_str))
+              .map(|(media_type, data)| {
+                json!({
+                  "inlineData": {
+                    "mimeType": media_type,
+                    "data": data,
+                  }
+                })
+              })
+          })
+      };
+
+      let remote_part = || {
+        object.get("url").and_then(Value::as_str).map(|url| {
+          json!({
+            "fileData": {
+              "mimeType": object
+                .get("media_type")
+                .and_then(Value::as_str)
+                .unwrap_or_else(|| infer_media_type_from_url(url)),
+              "fileUri": url,
+            }
+          })
+        })
+      };
+
+      match plan {
+        AttachmentReferencePlan::Inline => {
+          if let Some(part) = inline_part().or_else(remote_part) {
+            return part;
+          }
+        }
+        AttachmentReferencePlan::Remote => {
+          if let Some(part) = remote_part().or_else(inline_part) {
+            return part;
+          }
+        }
+      }
+
       if let (Some(Value::String(media_type)), Some(Value::String(data))) =
         (object.get("media_type"), object.get("data"))
       {

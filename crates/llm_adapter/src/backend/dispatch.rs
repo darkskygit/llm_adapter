@@ -17,12 +17,18 @@ use super::{
 };
 
 impl BackendProtocol {
-  fn encode_request(&self, request: &CoreRequest, stream: bool) -> Value {
+  fn encode_request(
+    &self,
+    request: &CoreRequest,
+    stream: bool,
+    request_layer: BackendRequestLayer,
+    base_url: &str,
+  ) -> Value {
     match self {
       BackendProtocol::OpenaiChatCompletions => openai::chat::request::encode(request, stream),
       BackendProtocol::OpenaiResponses => openai::responses::request::encode(request, stream),
       BackendProtocol::AnthropicMessages => anthropic::request::encode(request, stream),
-      BackendProtocol::GeminiGenerateContent => gemini::request::encode(request, stream),
+      BackendProtocol::GeminiGenerateContent => gemini::request::encode(request, stream, request_layer, base_url),
     }
   }
 
@@ -35,11 +41,18 @@ impl BackendProtocol {
     }
   }
 
-  fn encode_structured_request(&self, request: &StructuredRequest) -> Result<Value, ProtocolError> {
+  fn encode_structured_request(
+    &self,
+    request: &StructuredRequest,
+    request_layer: BackendRequestLayer,
+    base_url: &str,
+  ) -> Result<Value, ProtocolError> {
     match self {
       BackendProtocol::OpenaiChatCompletions
       | BackendProtocol::OpenaiResponses
-      | BackendProtocol::GeminiGenerateContent => Ok(self.encode_request(&request.as_core_request(), false)),
+      | BackendProtocol::GeminiGenerateContent => {
+        Ok(self.encode_request(&request.as_core_request(), false, request_layer, base_url))
+      }
       BackendProtocol::AnthropicMessages => Err(ProtocolError::InvalidValue {
         field: "protocol",
         message: "structured dispatch is unsupported for anthropic_messages".to_string(),
@@ -175,7 +188,7 @@ fn build_http_request(
   let mut headers = request_layer.build_headers(config, stream);
   headers.extend(build_extra_headers(config));
 
-  let body = request_layer.rewrite_body(protocol.encode_request(request, stream));
+  let body = request_layer.rewrite_body(protocol.encode_request(request, stream, request_layer, &config.base_url));
 
   Ok(HttpRequest {
     url: request_layer.build_url(&config.base_url, &request.model, stream),
@@ -200,7 +213,7 @@ fn build_structured_http_request(
     headers,
     body: request_layer.rewrite_body(
       protocol
-        .encode_structured_request(request)
+        .encode_structured_request(request, request_layer, &config.base_url)
         .map_err(map_protocol_error)?,
     ),
     timeout_ms: config.timeout_ms,
