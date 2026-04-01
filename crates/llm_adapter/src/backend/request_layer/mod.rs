@@ -84,9 +84,54 @@ const VERTEX_ANTHROPIC_LAYER: VertexAnthropicRequestLayer = VertexAnthropicReque
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum AttachmentReferencePlan {
+pub enum AttachmentReferenceMode {
   Remote,
   Inline,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AttachmentReferenceReason {
+  NonUrlSource,
+  UnsupportedScheme,
+  GenericRemoteReference,
+  GeminiApiFileUri,
+  GeminiApiYoutubeUrl,
+  GeminiApiInlineHttpUrl,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AttachmentReferencePlan {
+  pub mode: AttachmentReferenceMode,
+  pub reason: AttachmentReferenceReason,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct RequestIntentReasoning {
+  #[serde(default)]
+  pub enabled: bool,
+  #[serde(default)]
+  pub effort: Option<String>,
+  #[serde(default)]
+  pub budget_tokens: Option<u32>,
+  #[serde(default)]
+  pub include_reasoning: bool,
+}
+
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+pub struct RequestIntent {
+  #[serde(default)]
+  pub include: Vec<String>,
+  #[serde(default)]
+  pub reasoning: Option<RequestIntentReasoning>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+pub struct ResolvedRequestIntent {
+  #[serde(skip_serializing_if = "Option::is_none")]
+  pub include: Option<Vec<String>>,
+  #[serde(skip_serializing_if = "Option::is_none")]
+  pub reasoning: Option<Value>,
 }
 
 impl BackendProtocol {
@@ -213,14 +258,60 @@ impl BackendRequestLayer {
     };
 
     let Some(url) = url else {
-      return AttachmentReferencePlan::Inline;
+      return AttachmentReferencePlan {
+        mode: AttachmentReferenceMode::Inline,
+        reason: AttachmentReferenceReason::NonUrlSource,
+      };
     };
 
     match self {
-      BackendRequestLayer::GeminiApi if should_inline_gemini_api_attachment(url, base_url) => {
-        AttachmentReferencePlan::Inline
+      BackendRequestLayer::GeminiApi => plan_gemini_api_attachment_reference(url, base_url),
+      _ => generic_remote_reference_plan(url),
+    }
+  }
+
+  pub fn resolve_request_intent(&self, intent: RequestIntent) -> ResolvedRequestIntent {
+    let mut include = intent.include;
+    let mut reasoning = None;
+
+    if let Some(reasoning_intent) = intent.reasoning.filter(|value| value.enabled) {
+      if reasoning_intent.include_reasoning {
+        include.push("reasoning".to_string());
       }
-      _ => AttachmentReferencePlan::Remote,
+
+      reasoning = match self {
+        BackendRequestLayer::Anthropic | BackendRequestLayer::VertexAnthropic => Some(Value::Object(
+          [(
+            "budget_tokens".to_string(),
+            Value::from(reasoning_intent.budget_tokens.unwrap_or(12_000)),
+          )]
+          .into_iter()
+          .collect(),
+        )),
+        _ => Some(Value::Object(
+          match reasoning_intent.budget_tokens {
+            Some(budget_tokens) => [("budget_tokens".to_string(), Value::from(budget_tokens))]
+              .into_iter()
+              .collect(),
+            None => [(
+              "effort".to_string(),
+              Value::String(reasoning_intent.effort.unwrap_or_else(|| "medium".to_string())),
+            )]
+            .into_iter()
+            .collect(),
+          },
+        )),
+      };
+    }
+
+    if !include.is_empty() {
+      include.sort();
+      include.dedup();
+    }
+
+    ResolvedRequestIntent {
+      include: (!include.is_empty()).then_some(include),
+      reasoning,
     }
   }
 
@@ -255,16 +346,69 @@ pub fn resolve_attachment_reference_plan(
   Ok(request_layer.plan_attachment_reference(&config.base_url, source))
 }
 
-fn should_inline_gemini_api_attachment(url: &str, base_url: &str) -> bool {
+pub fn resolve_request_intent(
+  config: &BackendConfig,
+  protocol: &BackendProtocol,
+  intent: RequestIntent,
+) -> Result<ResolvedRequestIntent, BackendError> {
+  let request_layer = resolve_request_layer(config, protocol)?;
+  Ok(request_layer.resolve_request_intent(intent))
+}
+
+fn generic_remote_reference_plan(url: &str) -> AttachmentReferencePlan {
   let Ok(parsed) = url.parse::<url::Url>() else {
-    return false;
+    return AttachmentReferencePlan {
+      mode: AttachmentReferenceMode::Inline,
+      reason: AttachmentReferenceReason::UnsupportedScheme,
+    };
+  };
+
+  if !matches!(parsed.scheme(), "http" | "https" | "gs") {
+    return AttachmentReferencePlan {
+      mode: AttachmentReferenceMode::Inline,
+      reason: AttachmentReferenceReason::UnsupportedScheme,
+    };
+  }
+
+  AttachmentReferencePlan {
+    mode: AttachmentReferenceMode::Remote,
+    reason: AttachmentReferenceReason::GenericRemoteReference,
+  }
+}
+
+fn plan_gemini_api_attachment_reference(url: &str, base_url: &str) -> AttachmentReferencePlan {
+  let Ok(parsed) = url.parse::<url::Url>() else {
+    return AttachmentReferencePlan {
+      mode: AttachmentReferenceMode::Inline,
+      reason: AttachmentReferenceReason::UnsupportedScheme,
+    };
   };
 
   if !matches!(parsed.scheme(), "http" | "https") {
-    return false;
+    return AttachmentReferencePlan {
+      mode: AttachmentReferenceMode::Inline,
+      reason: AttachmentReferenceReason::UnsupportedScheme,
+    };
   }
 
-  !(is_gemini_file_url(&parsed, base_url) || is_youtube_url(&parsed))
+  if is_gemini_file_url(&parsed, base_url) {
+    return AttachmentReferencePlan {
+      mode: AttachmentReferenceMode::Remote,
+      reason: AttachmentReferenceReason::GeminiApiFileUri,
+    };
+  }
+
+  if is_youtube_url(&parsed) {
+    return AttachmentReferencePlan {
+      mode: AttachmentReferenceMode::Remote,
+      reason: AttachmentReferenceReason::GeminiApiYoutubeUrl,
+    };
+  }
+
+  AttachmentReferencePlan {
+    mode: AttachmentReferenceMode::Inline,
+    reason: AttachmentReferenceReason::GeminiApiInlineHttpUrl,
+  }
 }
 
 fn is_youtube_url(url: &url::Url) -> bool {
@@ -302,7 +446,10 @@ fn is_gemini_file_url(url: &url::Url, base_url: &str) -> bool {
 mod tests {
   use serde_json::json;
 
-  use super::{AttachmentReferencePlan, BackendRequestLayer};
+  use super::{
+    AttachmentReferenceMode, AttachmentReferencePlan, AttachmentReferenceReason, BackendRequestLayer, RequestIntent,
+    RequestIntentReasoning,
+  };
 
   #[test]
   fn gemini_api_should_inline_generic_http_attachments() {
@@ -311,7 +458,13 @@ mod tests {
       &json!({ "url": "https://example.com/a.jpg" }),
     );
 
-    assert_eq!(plan, AttachmentReferencePlan::Inline);
+    assert_eq!(
+      plan,
+      AttachmentReferencePlan {
+        mode: AttachmentReferenceMode::Inline,
+        reason: AttachmentReferenceReason::GeminiApiInlineHttpUrl,
+      }
+    );
   }
 
   #[test]
@@ -322,11 +475,23 @@ mod tests {
       base_url,
       &json!({ "url": "https://generativelanguage.googleapis.com/v1beta/files/file-123" }),
     );
-    assert_eq!(file_plan, AttachmentReferencePlan::Remote);
+    assert_eq!(
+      file_plan,
+      AttachmentReferencePlan {
+        mode: AttachmentReferenceMode::Remote,
+        reason: AttachmentReferenceReason::GeminiApiFileUri,
+      }
+    );
 
     let youtube_plan = BackendRequestLayer::GeminiApi
       .plan_attachment_reference(base_url, &json!({ "url": "https://www.youtube.com/watch?v=abc123" }));
-    assert_eq!(youtube_plan, AttachmentReferencePlan::Remote);
+    assert_eq!(
+      youtube_plan,
+      AttachmentReferencePlan {
+        mode: AttachmentReferenceMode::Remote,
+        reason: AttachmentReferenceReason::GeminiApiYoutubeUrl,
+      }
+    );
   }
 
   #[test]
@@ -334,7 +499,48 @@ mod tests {
     let plan = BackendRequestLayer::GeminiVertex
       .plan_attachment_reference("https://vertex.example", &json!({ "url": "https://example.com/a.jpg" }));
 
-    assert_eq!(plan, AttachmentReferencePlan::Remote);
+    assert_eq!(
+      plan,
+      AttachmentReferencePlan {
+        mode: AttachmentReferenceMode::Remote,
+        reason: AttachmentReferenceReason::GenericRemoteReference,
+      }
+    );
+  }
+
+  #[test]
+  fn anthropic_request_intent_should_force_budget_tokens() {
+    let resolved = BackendRequestLayer::Anthropic.resolve_request_intent(RequestIntent {
+      include: vec!["citations".to_string()],
+      reasoning: Some(RequestIntentReasoning {
+        enabled: true,
+        effort: Some("high".to_string()),
+        budget_tokens: None,
+        include_reasoning: false,
+      }),
+    });
+
+    assert_eq!(resolved.include, Some(vec!["citations".to_string()]));
+    assert_eq!(resolved.reasoning, Some(json!({ "budget_tokens": 12000 })));
+  }
+
+  #[test]
+  fn openai_request_intent_should_merge_reasoning_include_and_effort() {
+    let resolved = BackendRequestLayer::ChatCompletions.resolve_request_intent(RequestIntent {
+      include: vec!["citations".to_string()],
+      reasoning: Some(RequestIntentReasoning {
+        enabled: true,
+        effort: Some("high".to_string()),
+        budget_tokens: None,
+        include_reasoning: true,
+      }),
+    });
+
+    assert_eq!(
+      resolved.include,
+      Some(vec!["citations".to_string(), "reasoning".to_string()])
+    );
+    assert_eq!(resolved.reasoning, Some(json!({ "effort": "high" })));
   }
 }
 

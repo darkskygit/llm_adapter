@@ -5,7 +5,7 @@ use super::{
   common::{attachment_source_to_part, parse_parts, tool_result_response, usage_to_gemini_json},
   get_first_str, get_str, map_gemini_finish_reason, message_token_estimate, usage_from_gemini,
 };
-use crate::backend::AttachmentReferencePlan;
+use crate::backend::{AttachmentReferenceMode, AttachmentReferencePlan, AttachmentReferenceReason};
 
 fn parse_candidate_message(candidate: &Value) -> CoreMessage {
   let content = candidate.get("content").unwrap_or(&Value::Null);
@@ -52,7 +52,13 @@ fn core_content_to_part(content: &CoreContent) -> Value {
       let Some((source, _)) = attachment_source(content) else {
         return Value::Null;
       };
-      attachment_source_to_part(source, AttachmentReferencePlan::Remote)
+      attachment_source_to_part(
+        source,
+        AttachmentReferencePlan {
+          mode: AttachmentReferenceMode::Remote,
+          reason: AttachmentReferenceReason::GenericRemoteReference,
+        },
+      )
     }
   }
 }

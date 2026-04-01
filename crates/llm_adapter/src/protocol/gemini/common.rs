@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use serde_json::{Map, Value, json};
 
 use super::{CoreAttachmentKind, CoreContent, CoreUsage, attachment_content_from_source, infer_media_type_from_url};
-use crate::backend::AttachmentReferencePlan;
+use crate::backend::{AttachmentReferenceMode, AttachmentReferencePlan};
 
 pub(crate) fn get_value<'a>(value: &'a Value, keys: &[&str]) -> Option<&'a Value> {
   keys.iter().find_map(|key| value.get(*key))
@@ -70,13 +70,13 @@ pub(crate) fn attachment_source_to_part(source: &Value, plan: AttachmentReferenc
         })
       };
 
-      match plan {
-        AttachmentReferencePlan::Inline => {
+      match plan.mode {
+        AttachmentReferenceMode::Inline => {
           if let Some(part) = inline_part().or_else(remote_part) {
             return part;
           }
         }
-        AttachmentReferencePlan::Remote => {
+        AttachmentReferenceMode::Remote => {
           if let Some(part) = remote_part().or_else(inline_part) {
             return part;
           }
