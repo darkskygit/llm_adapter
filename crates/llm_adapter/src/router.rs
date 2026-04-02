@@ -4,7 +4,9 @@
 //! retry/fallback policies on top of this library.
 
 use crate::{
-  backend::{BackendConfig, BackendError, BackendHttpClient, BackendProtocol, collect_stream_events, dispatch_request},
+  backend::{
+    BackendConfig, BackendError, BackendHttpClient, BackendProtocol, dispatch_request, dispatch_stream_events_with,
+  },
   core::{CoreRequest, CoreResponse, StreamEvent},
 };
 
@@ -36,11 +38,15 @@ pub fn dispatch_with_fallback(
   Err(last_error.unwrap_or(BackendError::NoBackendAvailable))
 }
 
-pub fn dispatch_stream_with_fallback(
+pub fn dispatch_stream_with_fallback<F>(
   client: &dyn BackendHttpClient,
   routes: &[RoutedBackend],
   request: &CoreRequest,
-) -> Result<(String, Vec<StreamEvent>), BackendError> {
+  mut on_event: F,
+) -> Result<String, BackendError>
+where
+  F: FnMut(StreamEvent) -> Result<(), BackendError>,
+{
   let mut last_error: Option<BackendError> = None;
 
   for route in routes {
@@ -49,15 +55,35 @@ pub fn dispatch_stream_with_fallback(
     }
 
     let routed_request = with_model(request, &route.model);
-    match collect_stream_events(client, &route.config, route.protocol, &routed_request) {
-      Ok(stream) => return Ok((route.provider_id.clone(), stream)),
+    let mut emitted = false;
+    match dispatch_stream_events_with(client, &route.config, route.protocol, &routed_request, |event| {
+      emitted = true;
+      on_event(event)
+    }) {
+      Ok(()) => return Ok(route.provider_id.clone()),
       Err(error) => {
+        if emitted {
+          return Err(error);
+        }
         last_error = Some(error);
       }
     }
   }
 
   Err(last_error.unwrap_or(BackendError::NoBackendAvailable))
+}
+
+pub fn collect_stream_with_fallback(
+  client: &dyn BackendHttpClient,
+  routes: &[RoutedBackend],
+  request: &CoreRequest,
+) -> Result<(String, Vec<StreamEvent>), BackendError> {
+  let mut events = Vec::new();
+  let provider_id = dispatch_stream_with_fallback(client, routes, request, |event| {
+    events.push(event);
+    Ok(())
+  })?;
+  Ok((provider_id, events))
 }
 
 fn with_model(request: &CoreRequest, model: &str) -> CoreRequest {
@@ -159,7 +185,7 @@ mod tests {
       },
     ];
 
-    let (provider_id, stream) = dispatch_stream_with_fallback(&client, &routes, &sample_request()).unwrap();
+    let (provider_id, stream) = collect_stream_with_fallback(&client, &routes, &sample_request()).unwrap();
 
     assert_eq!(provider_id, "openai-stream");
     assert!(
@@ -167,6 +193,53 @@ mod tests {
         .iter()
         .any(|event| matches!(event, StreamEvent::TextDelta { text } if text == "hello"))
     );
+  }
+
+  #[test]
+  fn should_not_fallback_after_stream_has_started() {
+    let client = MockHttpClient::new(
+      vec![],
+      vec![
+        MockHttpResponse::Stream(Ok(HttpStreamResponse {
+          status: 200,
+          body: concat!(
+            "data: {\"id\":\"chat_1\",\"object\":\"chat.completion.chunk\",\"model\":\"gpt-4.1\",\"choices\":[{\"\
+             index\":0,\"delta\":{\"content\":\"hello\"},\"finish_reason\":null}]}\n\n"
+          )
+          .to_string(),
+        })),
+        MockHttpResponse::Stream(Ok(HttpStreamResponse {
+          status: 200,
+          body: concat!(
+            "data: {\"id\":\"chat_2\",\"object\":\"chat.completion.chunk\",\"model\":\"gpt-4.1\",\"choices\":[{\"\
+             index\":0,\"delta\":{\"content\":\"fallback\"},\"finish_reason\":null}]}\n\n",
+            "data: [DONE]\n\n"
+          )
+          .to_string(),
+        })),
+      ],
+    );
+
+    let routes = vec![
+      RoutedBackend {
+        provider_id: "openai-primary".to_string(),
+        protocol: BackendProtocol::OpenaiChatCompletions,
+        model: "gpt-4.1".to_string(),
+        config: sample_backend_config(false),
+      },
+      RoutedBackend {
+        provider_id: "openai-fallback".to_string(),
+        protocol: BackendProtocol::OpenaiChatCompletions,
+        model: "gpt-4.1".to_string(),
+        config: sample_backend_config(false),
+      },
+    ];
+
+    let result = dispatch_stream_with_fallback(&client, &routes, &sample_request(), |_event| {
+      Err(BackendError::Http("stream consumer failed".to_string()))
+    });
+
+    assert!(matches!(result, Err(BackendError::Http(message)) if message == "stream consumer failed"));
   }
 
   #[test]
