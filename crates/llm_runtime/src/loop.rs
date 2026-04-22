@@ -1,7 +1,7 @@
 use llm_adapter::core::CoreMessage;
 
 use crate::{
-  AccumulatedToolCall, RoundOutcome, ToolExecutionResult, ToolLoopEvent, ToolResultMessage, append_tool_turns,
+  EventSink, RoundOutcome, ToolExecutor, ToolLoopEvent, ToolResultMessage, append_tool_turns,
 };
 
 pub fn run_tool_loop<E, DispatchRound, ExecuteTool, EmitEvent, MaxStepsError>(
@@ -14,15 +14,15 @@ pub fn run_tool_loop<E, DispatchRound, ExecuteTool, EmitEvent, MaxStepsError>(
 ) -> Result<(), E>
 where
   DispatchRound: FnMut(&[CoreMessage]) -> Result<RoundOutcome, E>,
-  ExecuteTool: FnMut(&AccumulatedToolCall) -> Result<ToolExecutionResult, E>,
-  EmitEvent: FnMut(&ToolLoopEvent) -> Result<(), E>,
+  ExecuteTool: ToolExecutor<E>,
+  EmitEvent: EventSink<E>,
   MaxStepsError: FnMut() -> E,
 {
   for step in 0..max_steps {
     let outcome = dispatch_round(messages)?;
     if outcome.tool_calls.is_empty() {
       if let Some(done) = outcome.final_done {
-        emit_event(&done)?;
+        emit_event.emit(&done)?;
       }
       return Ok(());
     }
@@ -33,8 +33,8 @@ where
 
     let mut replay_results = Vec::with_capacity(outcome.tool_calls.len());
     for call in &outcome.tool_calls {
-      let result = execute_tool(call)?;
-      emit_event(&ToolLoopEvent::ToolResult {
+      let result = execute_tool.execute(call)?;
+      emit_event.emit(&ToolLoopEvent::ToolResult {
         call_id: result.call_id.clone(),
         name: result.name.clone(),
         arguments: result.arguments.clone(),
@@ -60,9 +60,10 @@ where
 mod tests {
   use llm_adapter::core::{CoreContent, CoreMessage, CoreRole};
   use serde_json::json;
+  use std::sync::{Arc, Mutex};
 
   use super::run_tool_loop;
-  use crate::{RoundOutcome, ToolExecutionResult, ToolLoopEvent};
+  use crate::{AccumulatedToolCall, EventSink, RoundOutcome, ToolExecutionResult, ToolExecutor, ToolLoopEvent};
 
   #[test]
   fn should_replay_tool_results_before_emitting_done() {
@@ -167,5 +168,94 @@ mod tests {
     .unwrap_err();
 
     assert_eq!(error, "ToolCallLoop max steps reached");
+  }
+
+  struct RecordingExecutor;
+
+  impl ToolExecutor<String> for RecordingExecutor {
+    fn execute(&mut self, call: &AccumulatedToolCall) -> Result<ToolExecutionResult, String> {
+      Ok(ToolExecutionResult {
+        call_id: call.id.clone(),
+        name: call.name.clone(),
+        arguments: call.args.clone(),
+        arguments_text: call.raw_arguments_text.clone(),
+        arguments_error: call.argument_parse_error.clone(),
+        output: json!({ "ok": true }),
+        is_error: Some(false),
+      })
+    }
+  }
+
+  struct RecordingSink(Arc<Mutex<Vec<ToolLoopEvent>>>);
+
+  impl EventSink<String> for RecordingSink {
+    fn emit(&mut self, event: &ToolLoopEvent) -> Result<(), String> {
+      self
+        .0
+        .lock()
+        .expect("recording sink poisoned")
+        .push(event.clone());
+      Ok(())
+    }
+  }
+
+  #[test]
+  fn should_accept_explicit_host_trait_implementations() {
+    let mut messages = vec![CoreMessage {
+      role: CoreRole::User,
+      content: vec![CoreContent::Text {
+        text: "run tool".to_string(),
+      }],
+    }];
+    let mut rounds = vec![
+      RoundOutcome {
+        tool_calls: vec![AccumulatedToolCall {
+          id: "call_1".to_string(),
+          name: "doc_read".to_string(),
+          args: json!({ "doc_id": "a1" }),
+          raw_arguments_text: None,
+          argument_parse_error: None,
+          thought: None,
+        }],
+        final_done: Some(ToolLoopEvent::Done {
+          finish_reason: Some("tool_calls".to_string()),
+          usage: None,
+        }),
+      },
+      RoundOutcome {
+        tool_calls: Vec::new(),
+        final_done: Some(ToolLoopEvent::Done {
+          finish_reason: Some("stop".to_string()),
+          usage: None,
+        }),
+      },
+    ]
+    .into_iter();
+    let sink_events = Arc::new(Mutex::new(Vec::new()));
+    let sink = RecordingSink(sink_events.clone());
+
+    run_tool_loop(
+      &mut messages,
+      4,
+      |_| Ok(rounds.next().expect("missing round outcome")),
+      RecordingExecutor,
+      sink,
+      || "max steps".to_string(),
+    )
+    .unwrap();
+
+    assert!(matches!(
+      sink_events
+        .lock()
+        .expect("recording sink poisoned")
+        .as_slice(),
+      [
+        ToolLoopEvent::ToolResult { call_id, .. },
+        ToolLoopEvent::Done {
+          finish_reason: Some(reason),
+          ..
+        }
+      ] if call_id == "call_1" && reason == "stop"
+    ));
   }
 }
