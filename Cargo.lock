@@ -737,6 +737,20 @@ checksum = "6373607a59f0be73a39b6fe456b8192fcc3585f602af20751600e974dd455e77"
 [[package]]
 name = "llm_adapter"
 version = "0.1.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4a3c5dd274f3c56712c3c9f39a843670b145d12bdf77564030760ea490f0ec51"
+dependencies = [
+ "base64",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "ureq",
+]
+
+[[package]]
+name = "llm_adapter"
+version = "0.1.6"
 dependencies = [
  "anyhow",
  "base64",
@@ -752,24 +766,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "llm_adapter"
-version = "0.1.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4a3c5dd274f3c56712c3c9f39a843670b145d12bdf77564030760ea490f0ec51"
-dependencies = [
- "base64",
- "reqwest",
- "serde",
- "serde_json",
- "thiserror 2.0.18",
- "ureq",
-]
-
-[[package]]
 name = "llm_runtime"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
- "llm_adapter 0.1.5 (registry+https://github.com/rust-lang/crates.io-index)",
+ "llm_adapter 0.1.5",
  "serde",
  "serde_json",
  "thiserror 2.0.18",

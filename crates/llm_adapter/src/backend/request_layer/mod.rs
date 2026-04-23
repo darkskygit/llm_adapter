@@ -288,19 +288,17 @@ impl BackendRequestLayer {
           .into_iter()
           .collect(),
         )),
-        _ => Some(Value::Object(
-          match reasoning_intent.budget_tokens {
-            Some(budget_tokens) => [("budget_tokens".to_string(), Value::from(budget_tokens))]
-              .into_iter()
-              .collect(),
-            None => [(
-              "effort".to_string(),
-              Value::String(reasoning_intent.effort.unwrap_or_else(|| "medium".to_string())),
-            )]
+        _ => Some(Value::Object(match reasoning_intent.budget_tokens {
+          Some(budget_tokens) => [("budget_tokens".to_string(), Value::from(budget_tokens))]
             .into_iter()
             .collect(),
-          },
-        )),
+          None => [(
+            "effort".to_string(),
+            Value::String(reasoning_intent.effort.unwrap_or_else(|| "medium".to_string())),
+          )]
+          .into_iter()
+          .collect(),
+        })),
       };
     }
 

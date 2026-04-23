@@ -1,8 +1,6 @@
 use llm_adapter::core::CoreMessage;
 
-use crate::{
-  EventSink, RoundOutcome, ToolExecutor, ToolLoopEvent, ToolResultMessage, append_tool_turns,
-};
+use crate::{EventSink, RoundOutcome, ToolExecutor, ToolLoopEvent, ToolResultMessage, append_tool_turns};
 
 pub fn run_tool_loop<E, DispatchRound, ExecuteTool, EmitEvent, MaxStepsError>(
   messages: &mut Vec<CoreMessage>,
@@ -58,9 +56,10 @@ where
 
 #[cfg(test)]
 mod tests {
+  use std::sync::{Arc, Mutex};
+
   use llm_adapter::core::{CoreContent, CoreMessage, CoreRole};
   use serde_json::json;
-  use std::sync::{Arc, Mutex};
 
   use super::run_tool_loop;
   use crate::{AccumulatedToolCall, EventSink, RoundOutcome, ToolExecutionResult, ToolExecutor, ToolLoopEvent};
@@ -190,11 +189,7 @@ mod tests {
 
   impl EventSink<String> for RecordingSink {
     fn emit(&mut self, event: &ToolLoopEvent) -> Result<(), String> {
-      self
-        .0
-        .lock()
-        .expect("recording sink poisoned")
-        .push(event.clone());
+      self.0.lock().expect("recording sink poisoned").push(event.clone());
       Ok(())
     }
   }
