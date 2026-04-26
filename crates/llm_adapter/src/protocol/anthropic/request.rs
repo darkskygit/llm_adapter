@@ -48,7 +48,7 @@ fn parse_tool_choice(value: Option<Value>) -> Result<Option<CoreToolChoice>, Pro
         "none" => CoreToolChoice::Mode(CoreToolChoiceMode::None),
         "required" | "any" => CoreToolChoice::Mode(CoreToolChoiceMode::Required),
         _ => {
-          return Err(ProtocolError::InvalidValue {
+          return Err(ProtocolError::InvalidRequest {
             field: "tool_choice",
             message: format!("unsupported mode `{mode}`"),
           });
@@ -63,12 +63,12 @@ fn parse_tool_choice(value: Option<Value>) -> Result<Option<CoreToolChoice>, Pro
       if let Some(Value::String(name)) = object.get("tool_name") {
         return Ok(Some(CoreToolChoice::Specific { name: name.clone() }));
       }
-      Err(ProtocolError::InvalidValue {
+      Err(ProtocolError::InvalidRequest {
         field: "tool_choice",
         message: "unsupported object shape".to_string(),
       })
     }
-    _ => Err(ProtocolError::InvalidValue {
+    _ => Err(ProtocolError::InvalidRequest {
       field: "tool_choice",
       message: "expected string or object".to_string(),
     }),

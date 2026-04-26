@@ -77,7 +77,7 @@ pub fn decode(body: &Value) -> Result<CoreResponse, ProtocolError> {
     .get("candidates")
     .and_then(Value::as_array)
     .and_then(|candidates| candidates.first())
-    .ok_or(ProtocolError::MissingField("gemini.candidates[0]"))?;
+    .ok_or(ProtocolError::MissingResponseField("gemini.candidates[0]"))?;
   let message = parse_candidate_message(candidate);
   let completion_estimate = message_token_estimate(&message);
   let mut finish_reason = get_str(candidate, "finishReason")

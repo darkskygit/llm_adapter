@@ -1,7 +1,10 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use super::{BackendConfig, BackendError, BackendHttpClient, BackendProtocol, BackendRequestLayer};
+use super::{
+  BackendConfig, BackendError, BackendHttpClient, BackendRequestLayer, ChatProtocol, EmbeddingProtocol, ImageProtocol,
+  RerankProtocol, StructuredProtocol,
+};
 use crate::core::{RerankRequest, RerankResponse};
 
 mod anthropic;
@@ -37,9 +40,9 @@ trait RequestLayerImpl {
   }
 
   fn build_embedding_url(&self, _base_url: &str, _model: &str) -> Result<String, BackendError> {
-    Err(BackendError::InvalidConfig(
-      "embedding dispatch is not supported for this request layer".to_string(),
-    ))
+    Err(BackendError::InvalidConfig {
+      message: "embedding dispatch is not supported for this request layer".to_string(),
+    })
   }
 
   fn build_embedding_headers(&self, config: &BackendConfig) -> Vec<(String, String)> {
@@ -66,7 +69,7 @@ trait RequestLayerImpl {
     &self,
     _client: &dyn BackendHttpClient,
     _config: &BackendConfig,
-    _protocol: &BackendProtocol,
+    _protocol: &RerankProtocol,
     _request: &RerankRequest,
   ) -> Result<Option<RerankResponse>, BackendError> {
     Ok(None)
@@ -81,6 +84,49 @@ const GEMINI_API_LAYER: GeminiApiRequestLayer = GeminiApiRequestLayer;
 const GEMINI_VERTEX_LAYER: GeminiVertexRequestLayer = GeminiVertexRequestLayer;
 const RESPONSES_LAYER: ResponsesRequestLayer = ResponsesRequestLayer;
 const VERTEX_ANTHROPIC_LAYER: VertexAnthropicRequestLayer = VertexAnthropicRequestLayer;
+const OPENAI_IMAGES_LAYER: OpenaiImagesRequestLayer = OpenaiImagesRequestLayer;
+const FAL_LAYER: FalRequestLayer = FalRequestLayer;
+
+#[derive(Debug, Clone, Copy)]
+struct OpenaiImagesRequestLayer;
+
+impl RequestLayerImpl for OpenaiImagesRequestLayer {
+  fn build_url(&self, base_url: &str, _model: &str, _stream: bool) -> String {
+    join_url(base_url, "/v1/images/generations")
+  }
+
+  fn build_headers(&self, config: &BackendConfig, stream: bool) -> Vec<(String, String)> {
+    build_bearer_headers(config, stream)
+  }
+}
+
+impl OpenaiImagesRequestLayer {
+  fn build_image_url(&self, base_url: &str, edit: bool) -> String {
+    join_url(
+      base_url,
+      if edit {
+        "/v1/images/edits"
+      } else {
+        "/v1/images/generations"
+      },
+    )
+  }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct FalRequestLayer;
+
+impl RequestLayerImpl for FalRequestLayer {
+  fn build_url(&self, base_url: &str, model: &str, _stream: bool) -> String {
+    join_url(base_url, &format!("/fal-ai/{model}"))
+  }
+
+  fn build_headers(&self, config: &BackendConfig, _stream: bool) -> Vec<(String, String)> {
+    let mut headers = vec![("Authorization".to_string(), format!("key {}", config.auth_token))];
+    headers.extend(config.headers.iter().map(|(key, value)| (key.clone(), value.clone())));
+    headers
+  }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -134,57 +180,233 @@ pub struct ResolvedRequestIntent {
   pub reasoning: Option<Value>,
 }
 
-impl BackendProtocol {
+impl ChatProtocol {
   pub(super) fn as_str(&self) -> &'static str {
     match self {
-      BackendProtocol::OpenaiChatCompletions => "openai_chat_completions",
-      BackendProtocol::OpenaiResponses => "openai_responses",
-      BackendProtocol::AnthropicMessages => "anthropic_messages",
-      BackendProtocol::GeminiGenerateContent => "gemini_generate_content",
+      ChatProtocol::OpenaiChatCompletions => "openai_chat_completions",
+      ChatProtocol::OpenaiResponses => "openai_responses",
+      ChatProtocol::AnthropicMessages => "anthropic_messages",
+      ChatProtocol::GeminiGenerateContent => "gemini_generate_content",
+    }
+  }
+}
+
+impl StructuredProtocol {
+  pub(super) fn as_str(&self) -> &'static str {
+    match self {
+      StructuredProtocol::OpenaiChatCompletions => "openai_chat_completions",
+      StructuredProtocol::OpenaiResponses => "openai_responses",
+      StructuredProtocol::GeminiGenerateContent => "gemini_generate_content",
+    }
+  }
+}
+
+impl EmbeddingProtocol {
+  pub(super) fn as_str(&self) -> &'static str {
+    match self {
+      EmbeddingProtocol::Openai => "openai",
+      EmbeddingProtocol::Gemini => "gemini",
+    }
+  }
+}
+
+impl RerankProtocol {
+  pub(super) fn as_str(&self) -> &'static str {
+    match self {
+      RerankProtocol::OpenaiChatLogprobs => "openai_chat_logprobs",
+      RerankProtocol::CloudflareWorkersAi => "cloudflare_workers_ai",
+    }
+  }
+}
+
+impl ImageProtocol {
+  pub(super) fn as_str(&self) -> &'static str {
+    match self {
+      ImageProtocol::OpenaiImages => "openai_images",
+      ImageProtocol::GeminiGenerateContent => "gemini_generate_content",
+      ImageProtocol::FalImage => "fal_image",
     }
   }
 }
 
 impl BackendRequestLayer {
-  pub(super) fn from_protocol(protocol: &BackendProtocol) -> Self {
+  pub(super) fn from_chat_protocol(protocol: &ChatProtocol) -> Self {
     match protocol {
-      BackendProtocol::OpenaiChatCompletions => Self::ChatCompletions,
-      BackendProtocol::OpenaiResponses => Self::Responses,
-      BackendProtocol::AnthropicMessages => Self::Anthropic,
-      BackendProtocol::GeminiGenerateContent => Self::GeminiApi,
+      ChatProtocol::OpenaiChatCompletions => Self::ChatCompletions,
+      ChatProtocol::OpenaiResponses => Self::Responses,
+      ChatProtocol::AnthropicMessages => Self::Anthropic,
+      ChatProtocol::GeminiGenerateContent => Self::GeminiApi,
     }
   }
 
-  fn ensure_compatible(&self, protocol: &BackendProtocol) -> Result<(), BackendError> {
+  pub(super) fn from_structured_protocol(protocol: &StructuredProtocol) -> Self {
+    match protocol {
+      StructuredProtocol::OpenaiChatCompletions => Self::ChatCompletions,
+      StructuredProtocol::OpenaiResponses => Self::Responses,
+      StructuredProtocol::GeminiGenerateContent => Self::GeminiApi,
+    }
+  }
+
+  pub(super) fn from_embedding_protocol(protocol: &EmbeddingProtocol) -> Self {
+    match protocol {
+      EmbeddingProtocol::Openai => Self::ChatCompletions,
+      EmbeddingProtocol::Gemini => Self::GeminiApi,
+    }
+  }
+
+  pub(super) fn from_rerank_protocol(protocol: &RerankProtocol) -> Self {
+    match protocol {
+      RerankProtocol::OpenaiChatLogprobs => Self::ChatCompletions,
+      RerankProtocol::CloudflareWorkersAi => Self::CloudflareWorkersAi,
+    }
+  }
+
+  pub(super) fn from_image_protocol(protocol: &ImageProtocol) -> Self {
+    match protocol {
+      ImageProtocol::OpenaiImages => Self::OpenaiImages,
+      ImageProtocol::GeminiGenerateContent => Self::GeminiApi,
+      ImageProtocol::FalImage => Self::Fal,
+    }
+  }
+
+  fn ensure_chat_compatible(&self, protocol: &ChatProtocol) -> Result<(), BackendError> {
     let compatible = matches!(
       (self, protocol),
       (
         BackendRequestLayer::ChatCompletions,
-        BackendProtocol::OpenaiChatCompletions
+        ChatProtocol::OpenaiChatCompletions
       ) | (
         BackendRequestLayer::ChatCompletionsNoV1,
-        BackendProtocol::OpenaiChatCompletions
+        ChatProtocol::OpenaiChatCompletions
       ) | (
         BackendRequestLayer::CloudflareWorkersAi,
-        BackendProtocol::OpenaiChatCompletions
-      ) | (BackendRequestLayer::Responses, BackendProtocol::OpenaiResponses)
-        | (BackendRequestLayer::Anthropic, BackendProtocol::AnthropicMessages)
-        | (BackendRequestLayer::VertexAnthropic, BackendProtocol::AnthropicMessages)
-        | (BackendRequestLayer::GeminiApi, BackendProtocol::GeminiGenerateContent)
+        ChatProtocol::OpenaiChatCompletions
+      ) | (BackendRequestLayer::Responses, ChatProtocol::OpenaiResponses)
+        | (BackendRequestLayer::Anthropic, ChatProtocol::AnthropicMessages)
+        | (BackendRequestLayer::VertexAnthropic, ChatProtocol::AnthropicMessages)
+        | (BackendRequestLayer::GeminiApi, ChatProtocol::GeminiGenerateContent)
+        | (BackendRequestLayer::GeminiVertex, ChatProtocol::GeminiGenerateContent)
+    );
+
+    if compatible {
+      Ok(())
+    } else {
+      Err(BackendError::InvalidConfig {
+        message: format!(
+          "request_layer `{}` is incompatible with chat protocol `{}`",
+          self.as_str(),
+          protocol.as_str(),
+        ),
+      })
+    }
+  }
+
+  fn ensure_structured_compatible(&self, protocol: &StructuredProtocol) -> Result<(), BackendError> {
+    let compatible = matches!(
+      (self, protocol),
+      (
+        BackendRequestLayer::ChatCompletions,
+        StructuredProtocol::OpenaiChatCompletions
+      ) | (
+        BackendRequestLayer::ChatCompletionsNoV1,
+        StructuredProtocol::OpenaiChatCompletions
+      ) | (
+        BackendRequestLayer::CloudflareWorkersAi,
+        StructuredProtocol::OpenaiChatCompletions
+      ) | (BackendRequestLayer::Responses, StructuredProtocol::OpenaiResponses)
+        | (
+          BackendRequestLayer::GeminiApi,
+          StructuredProtocol::GeminiGenerateContent
+        )
         | (
           BackendRequestLayer::GeminiVertex,
-          BackendProtocol::GeminiGenerateContent
+          StructuredProtocol::GeminiGenerateContent
         )
     );
 
     if compatible {
       Ok(())
     } else {
-      Err(BackendError::InvalidConfig(format!(
-        "request_layer `{}` is incompatible with protocol `{}`",
-        self.as_str(),
-        protocol.as_str(),
-      )))
+      Err(BackendError::InvalidConfig {
+        message: format!(
+          "request_layer `{}` is incompatible with structured protocol `{}`",
+          self.as_str(),
+          protocol.as_str(),
+        ),
+      })
+    }
+  }
+
+  fn ensure_embedding_compatible(&self, protocol: &EmbeddingProtocol) -> Result<(), BackendError> {
+    let compatible = matches!(
+      (self, protocol),
+      (BackendRequestLayer::ChatCompletions, EmbeddingProtocol::Openai)
+        | (BackendRequestLayer::ChatCompletionsNoV1, EmbeddingProtocol::Openai)
+        | (BackendRequestLayer::CloudflareWorkersAi, EmbeddingProtocol::Openai)
+        | (BackendRequestLayer::Responses, EmbeddingProtocol::Openai)
+        | (BackendRequestLayer::GeminiApi, EmbeddingProtocol::Gemini)
+        | (BackendRequestLayer::GeminiVertex, EmbeddingProtocol::Gemini)
+    );
+
+    if compatible {
+      Ok(())
+    } else {
+      Err(BackendError::InvalidConfig {
+        message: format!(
+          "request_layer `{}` is incompatible with embedding protocol `{}`",
+          self.as_str(),
+          protocol.as_str(),
+        ),
+      })
+    }
+  }
+
+  fn ensure_rerank_compatible(&self, protocol: &RerankProtocol) -> Result<(), BackendError> {
+    let compatible = matches!(
+      (self, protocol),
+      (BackendRequestLayer::ChatCompletions, RerankProtocol::OpenaiChatLogprobs)
+        | (
+          BackendRequestLayer::ChatCompletionsNoV1,
+          RerankProtocol::OpenaiChatLogprobs
+        )
+        | (
+          BackendRequestLayer::CloudflareWorkersAi,
+          RerankProtocol::CloudflareWorkersAi
+        )
+    );
+
+    if compatible {
+      Ok(())
+    } else {
+      Err(BackendError::InvalidConfig {
+        message: format!(
+          "request_layer `{}` is incompatible with rerank protocol `{}`",
+          self.as_str(),
+          protocol.as_str(),
+        ),
+      })
+    }
+  }
+
+  fn ensure_image_compatible(&self, protocol: &ImageProtocol) -> Result<(), BackendError> {
+    let compatible = matches!(
+      (self, protocol),
+      (BackendRequestLayer::OpenaiImages, ImageProtocol::OpenaiImages)
+        | (BackendRequestLayer::GeminiApi, ImageProtocol::GeminiGenerateContent)
+        | (BackendRequestLayer::GeminiVertex, ImageProtocol::GeminiGenerateContent)
+        | (BackendRequestLayer::Fal, ImageProtocol::FalImage)
+    );
+
+    if compatible {
+      Ok(())
+    } else {
+      Err(BackendError::InvalidConfig {
+        message: format!(
+          "request_layer `{}` is incompatible with image protocol `{}`",
+          self.as_str(),
+          protocol.as_str(),
+        ),
+      })
     }
   }
 
@@ -198,6 +420,8 @@ impl BackendRequestLayer {
       BackendRequestLayer::GeminiVertex => "gemini_vertex",
       BackendRequestLayer::Responses => "responses",
       BackendRequestLayer::VertexAnthropic => "vertex_anthropic",
+      BackendRequestLayer::OpenaiImages => "openai_images",
+      BackendRequestLayer::Fal => "fal",
     }
   }
 
@@ -211,11 +435,20 @@ impl BackendRequestLayer {
       BackendRequestLayer::GeminiVertex => &GEMINI_VERTEX_LAYER,
       BackendRequestLayer::Responses => &RESPONSES_LAYER,
       BackendRequestLayer::VertexAnthropic => &VERTEX_ANTHROPIC_LAYER,
+      BackendRequestLayer::OpenaiImages => &OPENAI_IMAGES_LAYER,
+      BackendRequestLayer::Fal => &FAL_LAYER,
     }
   }
 
   pub(super) fn build_url(&self, base_url: &str, model: &str, stream: bool) -> String {
     self.implementation().build_url(base_url, model, stream)
+  }
+
+  pub(super) fn build_image_url(&self, base_url: &str, model: &str, edit: bool) -> String {
+    match self {
+      BackendRequestLayer::OpenaiImages => OPENAI_IMAGES_LAYER.build_image_url(base_url, edit),
+      _ => self.build_url(base_url, model, false),
+    }
   }
 
   pub(super) fn build_headers(&self, config: &BackendConfig, stream: bool) -> Vec<(String, String)> {
@@ -317,39 +550,83 @@ impl BackendRequestLayer {
     &self,
     client: &dyn BackendHttpClient,
     config: &BackendConfig,
-    protocol: &BackendProtocol,
+    protocol: &RerankProtocol,
     request: &RerankRequest,
   ) -> Result<Option<RerankResponse>, BackendError> {
     self.implementation().dispatch_rerank(client, config, protocol, request)
   }
 }
 
-pub(super) fn resolve_request_layer(
+pub(super) fn resolve_chat_request_layer(
   config: &BackendConfig,
-  protocol: &BackendProtocol,
+  protocol: &ChatProtocol,
 ) -> Result<BackendRequestLayer, BackendError> {
   let request_layer = config
     .request_layer
-    .unwrap_or_else(|| BackendRequestLayer::from_protocol(protocol));
-  request_layer.ensure_compatible(protocol)?;
+    .unwrap_or_else(|| BackendRequestLayer::from_chat_protocol(protocol));
+  request_layer.ensure_chat_compatible(protocol)?;
+  Ok(request_layer)
+}
+
+pub(super) fn resolve_structured_request_layer(
+  config: &BackendConfig,
+  protocol: &StructuredProtocol,
+) -> Result<BackendRequestLayer, BackendError> {
+  let request_layer = config
+    .request_layer
+    .unwrap_or_else(|| BackendRequestLayer::from_structured_protocol(protocol));
+  request_layer.ensure_structured_compatible(protocol)?;
+  Ok(request_layer)
+}
+
+pub(super) fn resolve_embedding_request_layer(
+  config: &BackendConfig,
+  protocol: &EmbeddingProtocol,
+) -> Result<BackendRequestLayer, BackendError> {
+  let request_layer = config
+    .request_layer
+    .unwrap_or_else(|| BackendRequestLayer::from_embedding_protocol(protocol));
+  request_layer.ensure_embedding_compatible(protocol)?;
+  Ok(request_layer)
+}
+
+pub(super) fn resolve_rerank_request_layer(
+  config: &BackendConfig,
+  protocol: &RerankProtocol,
+) -> Result<BackendRequestLayer, BackendError> {
+  let request_layer = config
+    .request_layer
+    .unwrap_or_else(|| BackendRequestLayer::from_rerank_protocol(protocol));
+  request_layer.ensure_rerank_compatible(protocol)?;
+  Ok(request_layer)
+}
+
+pub(super) fn resolve_image_request_layer(
+  config: &BackendConfig,
+  protocol: &ImageProtocol,
+) -> Result<BackendRequestLayer, BackendError> {
+  let request_layer = config
+    .request_layer
+    .unwrap_or_else(|| BackendRequestLayer::from_image_protocol(protocol));
+  request_layer.ensure_image_compatible(protocol)?;
   Ok(request_layer)
 }
 
 pub fn resolve_attachment_reference_plan(
   config: &BackendConfig,
-  protocol: &BackendProtocol,
+  protocol: &ChatProtocol,
   source: &Value,
 ) -> Result<AttachmentReferencePlan, BackendError> {
-  let request_layer = resolve_request_layer(config, protocol)?;
+  let request_layer = resolve_chat_request_layer(config, protocol)?;
   Ok(request_layer.plan_attachment_reference(&config.base_url, source))
 }
 
 pub fn resolve_request_intent(
   config: &BackendConfig,
-  protocol: &BackendProtocol,
+  protocol: &ChatProtocol,
   intent: RequestIntent,
 ) -> Result<ResolvedRequestIntent, BackendError> {
-  let request_layer = resolve_request_layer(config, protocol)?;
+  let request_layer = resolve_chat_request_layer(config, protocol)?;
   Ok(request_layer.resolve_request_intent(intent))
 }
 

@@ -30,7 +30,7 @@ fn parse_input_item(item: Value) -> Result<CoreMessage, ProtocolError> {
       if matches!(object.get("type"), Some(Value::String(typ)) if typ == "function_call_output") {
         let call_id = match object.get("call_id") {
           Some(Value::String(call_id)) => call_id.clone(),
-          _ => return Err(ProtocolError::MissingField("input[].call_id")),
+          _ => return Err(ProtocolError::MissingResponseField("input[].call_id")),
         };
         return Ok(CoreMessage {
           role: CoreRole::Tool,
@@ -40,7 +40,7 @@ fn parse_input_item(item: Value) -> Result<CoreMessage, ProtocolError> {
 
       let role = match object.get("role") {
         Some(Value::String(role)) => parse_role(role, "role")?,
-        _ => return Err(ProtocolError::MissingField("input[].role")),
+        _ => return Err(ProtocolError::MissingResponseField("input[].role")),
       };
       let content_field = object.get("content").cloned();
       let content = parse_message_content(
@@ -55,7 +55,7 @@ fn parse_input_item(item: Value) -> Result<CoreMessage, ProtocolError> {
 
       Ok(CoreMessage { role, content })
     }
-    _ => Err(ProtocolError::InvalidValue {
+    _ => Err(ProtocolError::InvalidRequest {
       field: "input",
       message: "unsupported input item".to_string(),
     }),

@@ -82,7 +82,7 @@ fn parse_tool_choice(tool_config: Option<&Value>) -> Result<Option<CoreToolChoic
       }
       Ok(Some(CoreToolChoice::Mode(CoreToolChoiceMode::Required)))
     }
-    other => Err(ProtocolError::InvalidValue {
+    other => Err(ProtocolError::InvalidRequest {
       field: "toolConfig.functionCallingConfig.mode",
       message: format!("unsupported mode `{other}`"),
     }),

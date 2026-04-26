@@ -8,10 +8,10 @@ use super::{
 
 pub fn decode(body: &Value) -> Result<CoreResponse, ProtocolError> {
   let id = get_str(body, "id")
-    .ok_or(ProtocolError::MissingField("anthropic.id"))?
+    .ok_or(ProtocolError::MissingResponseField("anthropic.id"))?
     .to_string();
   let model = get_str(body, "model")
-    .ok_or(ProtocolError::MissingField("anthropic.model"))?
+    .ok_or(ProtocolError::MissingResponseField("anthropic.model"))?
     .to_string();
   let role = parse_role_lossy(get_str_or(body, "role", "assistant"));
 

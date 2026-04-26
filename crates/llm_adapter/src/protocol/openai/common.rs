@@ -72,7 +72,7 @@ pub(crate) fn parse_tool_calls(raw_tool_calls: &Value, field: &'static str) -> R
     let call_id = tool_call
       .id
       .or(tool_call.call_id)
-      .ok_or(ProtocolError::MissingField(field))?;
+      .ok_or(ProtocolError::MissingResponseField(field))?;
     content.push(CoreContent::ToolCall {
       call_id,
       name: tool_call.function.name,
@@ -505,7 +505,7 @@ fn parse_text_or_array_content(value: Option<Value>) -> Result<Vec<CoreContent>,
       }
       Ok(content)
     }
-    _ => Err(ProtocolError::InvalidValue {
+    _ => Err(ProtocolError::InvalidRequest {
       field: "content",
       message: "expected string or array".to_string(),
     }),
@@ -664,7 +664,7 @@ pub(crate) fn parse_tool_choice(value: Option<Value>) -> Result<Option<CoreToolC
         "none" => CoreToolChoice::Mode(CoreToolChoiceMode::None),
         "required" => CoreToolChoice::Mode(CoreToolChoiceMode::Required),
         _ => {
-          return Err(ProtocolError::InvalidValue {
+          return Err(ProtocolError::InvalidRequest {
             field: "tool_choice",
             message: format!("unsupported mode `{mode}`"),
           });
@@ -681,12 +681,12 @@ pub(crate) fn parse_tool_choice(value: Option<Value>) -> Result<Option<CoreToolC
       {
         return Ok(Some(CoreToolChoice::Specific { name: name.clone() }));
       }
-      Err(ProtocolError::InvalidValue {
+      Err(ProtocolError::InvalidRequest {
         field: "tool_choice",
         message: "unsupported object shape".to_string(),
       })
     }
-    _ => Err(ProtocolError::InvalidValue {
+    _ => Err(ProtocolError::InvalidRequest {
       field: "tool_choice",
       message: "expected string or object".to_string(),
     }),

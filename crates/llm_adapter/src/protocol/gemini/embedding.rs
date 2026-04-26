@@ -38,7 +38,7 @@ pub fn decode(body: &Value) -> Result<EmbeddingResponse, ProtocolError> {
   let predictions = body
     .get("predictions")
     .and_then(Value::as_array)
-    .ok_or(ProtocolError::MissingField("predictions|embeddings"))?;
+    .ok_or(ProtocolError::MissingResponseField("predictions|embeddings"))?;
   let usage = Some(EmbeddingUsage {
     prompt_tokens: predictions
       .iter()
@@ -82,11 +82,11 @@ fn parse_values(items: &[Value], field: &'static str) -> Result<Vec<Vec<f64>>, P
       let values = item
         .get("values")
         .and_then(Value::as_array)
-        .ok_or(ProtocolError::MissingField(field))?;
+        .ok_or(ProtocolError::MissingResponseField(field))?;
       values
         .iter()
         .map(|value| {
-          value.as_f64().ok_or(ProtocolError::InvalidValue {
+          value.as_f64().ok_or(ProtocolError::InvalidRequest {
             field,
             message: "expected number".to_string(),
           })
@@ -104,11 +104,11 @@ fn parse_prediction_values(predictions: &[Value]) -> Result<Vec<Vec<f64>>, Proto
         .get("embeddings")
         .and_then(|value| value.get("values"))
         .and_then(Value::as_array)
-        .ok_or(ProtocolError::MissingField("predictions[].embeddings.values"))?;
+        .ok_or(ProtocolError::MissingResponseField("predictions[].embeddings.values"))?;
       values
         .iter()
         .map(|value| {
-          value.as_f64().ok_or(ProtocolError::InvalidValue {
+          value.as_f64().ok_or(ProtocolError::InvalidRequest {
             field: "predictions[].embeddings.values[]",
             message: "expected number".to_string(),
           })

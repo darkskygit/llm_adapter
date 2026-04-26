@@ -166,7 +166,9 @@ impl BackendHttpClient for MockHttpClient {
       MockHttpResponse::Stream(response) => {
         let response = response?;
         for chunk in response.body.as_bytes().chunks(self.stream_chunk_size) {
-          let text = std::str::from_utf8(chunk).map_err(|error| BackendError::Http(error.to_string()))?;
+          let text = std::str::from_utf8(chunk).map_err(|error| BackendError::Transport {
+            message: error.to_string(),
+          })?;
           on_chunk(text)?;
         }
         Ok(())

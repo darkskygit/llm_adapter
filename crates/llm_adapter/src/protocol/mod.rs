@@ -2,6 +2,7 @@ mod common;
 mod error;
 
 pub mod anthropic;
+pub mod fal;
 pub mod gemini;
 pub mod openai;
 

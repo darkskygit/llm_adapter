@@ -42,20 +42,20 @@ fn parse_message_from_response(message: &Value) -> Result<CoreMessage, ProtocolE
 
 pub fn decode(body: &Value) -> Result<CoreResponse, ProtocolError> {
   let id = get_str(body, "id")
-    .ok_or(ProtocolError::MissingField("openai_chat.id"))?
+    .ok_or(ProtocolError::MissingResponseField("openai_chat.id"))?
     .to_string();
   let model = get_str(body, "model")
-    .ok_or(ProtocolError::MissingField("openai_chat.model"))?
+    .ok_or(ProtocolError::MissingResponseField("openai_chat.model"))?
     .to_string();
   let choice = body
     .get("choices")
     .and_then(Value::as_array)
     .and_then(|choices| choices.first())
-    .ok_or(ProtocolError::MissingField("openai_chat.choices[0]"))?;
+    .ok_or(ProtocolError::MissingResponseField("openai_chat.choices[0]"))?;
   let message = parse_message_from_response(
     choice
       .get("message")
-      .ok_or(ProtocolError::MissingField("openai_chat.choices[0].message"))?,
+      .ok_or(ProtocolError::MissingResponseField("openai_chat.choices[0].message"))?,
   )?;
   let completion_estimate = message_token_estimate(&message);
   let usage = usage_from_openai(body.get("usage"), 0, completion_estimate);

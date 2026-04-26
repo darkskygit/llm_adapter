@@ -142,162 +142,27 @@ impl CoreRequest {
   }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct StructuredRequest {
-  pub model: String,
-  #[serde(default)]
-  pub messages: Vec<CoreMessage>,
-  pub schema: Value,
-  #[serde(skip_serializing_if = "Option::is_none")]
-  pub max_tokens: Option<u32>,
-  #[serde(skip_serializing_if = "Option::is_none")]
-  pub temperature: Option<f64>,
-  #[serde(skip_serializing_if = "Option::is_none")]
-  pub reasoning: Option<Value>,
-  #[serde(skip_serializing_if = "Option::is_none")]
-  pub strict: Option<bool>,
-  #[serde(skip_serializing_if = "Option::is_none")]
-  pub response_mime_type: Option<String>,
-}
-
-impl StructuredRequest {
-  pub fn validate(&self) -> Result<(), ProtocolError> {
-    validate_messages(&self.messages)?;
-    Ok(())
-  }
-
-  #[must_use]
-  pub fn as_core_request(&self) -> CoreRequest {
-    CoreRequest {
-      model: self.model.clone(),
-      messages: self.messages.clone(),
-      stream: false,
-      max_tokens: self.max_tokens,
-      temperature: self.temperature,
-      tools: Vec::new(),
-      tool_choice: None,
-      include: None,
-      reasoning: self.reasoning.clone(),
-      response_schema: Some(self.schema.clone()),
-    }
-  }
-}
-
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
-pub struct EmbeddingUsage {
+pub struct CoreUsage {
   pub prompt_tokens: u32,
+  pub completion_tokens: u32,
   pub total_tokens: u32,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct EmbeddingRequest {
-  pub model: String,
-  pub inputs: Vec<String>,
   #[serde(skip_serializing_if = "Option::is_none")]
-  pub dimensions: Option<u32>,
-  #[serde(skip_serializing_if = "Option::is_none")]
-  pub task_type: Option<String>,
-}
-
-impl EmbeddingRequest {
-  pub fn validate(&self) -> Result<(), ProtocolError> {
-    if self.inputs.is_empty() {
-      return Err(ProtocolError::InvalidValue {
-        field: "inputs",
-        message: "expected at least one input".to_string(),
-      });
-    }
-
-    if self.inputs.iter().any(|input| input.is_empty()) {
-      return Err(ProtocolError::InvalidValue {
-        field: "inputs",
-        message: "inputs must not be empty".to_string(),
-      });
-    }
-
-    Ok(())
-  }
+  pub cached_tokens: Option<u32>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct RerankCandidate {
-  #[serde(default, skip_serializing_if = "Option::is_none")]
-  pub id: Option<String>,
-  pub text: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct RerankRequest {
-  pub model: String,
-  pub query: String,
-  #[serde(default)]
-  pub candidates: Vec<RerankCandidate>,
-  #[serde(skip_serializing_if = "Option::is_none")]
-  pub top_n: Option<u32>,
-}
-
-impl RerankRequest {
-  pub fn validate(&self) -> Result<(), ProtocolError> {
-    if self.query.trim().is_empty() {
-      return Err(ProtocolError::InvalidValue {
-        field: "query",
-        message: "query must not be empty".to_string(),
-      });
-    }
-
-    if self.candidates.is_empty() {
-      return Err(ProtocolError::InvalidValue {
-        field: "candidates",
-        message: "expected at least one candidate".to_string(),
-      });
-    }
-
-    if self.candidates.iter().any(|candidate| candidate.text.trim().is_empty()) {
-      return Err(ProtocolError::InvalidValue {
-        field: "candidates",
-        message: "candidate text must not be empty".to_string(),
-      });
-    }
-
-    if matches!(self.top_n, Some(0)) {
-      return Err(ProtocolError::InvalidValue {
-        field: "top_n",
-        message: "top_n must be greater than 0".to_string(),
-      });
-    }
-
-    Ok(())
-  }
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct StructuredResponse {
+pub struct CoreResponse {
   pub id: String,
   pub model: String,
-  pub output_text: String,
-  #[serde(skip_serializing_if = "Option::is_none")]
-  pub output_json: Option<Value>,
+  pub message: CoreMessage,
   pub usage: CoreUsage,
   pub finish_reason: String,
   #[serde(skip_serializing_if = "Option::is_none")]
   pub reasoning_details: Option<Value>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct EmbeddingResponse {
-  pub model: String,
-  pub embeddings: Vec<Vec<f64>>,
-  #[serde(skip_serializing_if = "Option::is_none")]
-  pub usage: Option<EmbeddingUsage>,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct RerankResponse {
-  pub model: String,
-  pub scores: Vec<f64>,
-}
-
-fn validate_messages(messages: &[CoreMessage]) -> Result<(), ProtocolError> {
+pub(super) fn validate_messages(messages: &[CoreMessage]) -> Result<(), ProtocolError> {
   for message in messages {
     for content in &message.content {
       if let (Some(kind), Some(source)) = (content.attachment_kind(), content.attachment_source()) {
@@ -387,84 +252,10 @@ fn invalid_attachment_source(kind: CoreAttachmentKind, message: &str) -> Protoco
     CoreAttachmentKind::Audio => "audio",
     CoreAttachmentKind::File => "file",
   };
-  ProtocolError::InvalidValue {
+  ProtocolError::InvalidRequest {
     field: "messages.content.source",
     message: format!("{kind} source {message}"),
   }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
-pub struct CoreUsage {
-  pub prompt_tokens: u32,
-  pub completion_tokens: u32,
-  pub total_tokens: u32,
-  #[serde(skip_serializing_if = "Option::is_none")]
-  pub cached_tokens: Option<u32>,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct CoreResponse {
-  pub id: String,
-  pub model: String,
-  pub message: CoreMessage,
-  pub usage: CoreUsage,
-  pub finish_reason: String,
-  #[serde(skip_serializing_if = "Option::is_none")]
-  pub reasoning_details: Option<Value>,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
-pub enum StreamEvent {
-  MessageStart {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    id: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    model: Option<String>,
-  },
-  TextDelta {
-    text: String,
-  },
-  ReasoningDelta {
-    text: String,
-  },
-  ToolCallDelta {
-    call_id: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    name: Option<String>,
-    arguments_delta: String,
-  },
-  ToolCall {
-    call_id: String,
-    name: String,
-    arguments: Value,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    thought: Option<String>,
-  },
-  ToolResult {
-    call_id: String,
-    output: Value,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    is_error: Option<bool>,
-  },
-  Citation {
-    index: usize,
-    url: String,
-  },
-  Usage {
-    usage: CoreUsage,
-  },
-  Done {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    finish_reason: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    usage: Option<CoreUsage>,
-  },
-  Error {
-    message: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    code: Option<String>,
-  },
 }
 
 #[cfg(test)]
@@ -520,34 +311,6 @@ mod tests {
       CoreToolChoice::Specific {
         name: "doc_update".to_string(),
       }
-    );
-  }
-
-  #[test]
-  fn should_serialize_stream_event_with_usage() {
-    let event = StreamEvent::Done {
-      finish_reason: Some("stop".to_string()),
-      usage: Some(CoreUsage {
-        prompt_tokens: 100,
-        completion_tokens: 20,
-        total_tokens: 120,
-        cached_tokens: Some(12),
-      }),
-    };
-
-    let value = serde_json::to_value(&event).unwrap();
-    assert_eq!(
-      value,
-      json!({
-        "type": "done",
-        "finish_reason": "stop",
-        "usage": {
-          "prompt_tokens": 100,
-          "completion_tokens": 20,
-          "total_tokens": 120,
-          "cached_tokens": 12
-        }
-      })
     );
   }
 
@@ -613,7 +376,7 @@ mod tests {
 
     assert!(matches!(
       invalid.validate(),
-      Err(ProtocolError::InvalidValue {
+      Err(ProtocolError::InvalidRequest {
         field: "messages.content.source",
         ..
       })

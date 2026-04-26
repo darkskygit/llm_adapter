@@ -4,7 +4,7 @@ use ureq::{Agent, RequestBuilder};
 
 use super::{
   super::{BackendError, BackendHttpClient, HttpRequest, HttpResponse},
-  shared::stream_utf8_chunks,
+  shared::{serialize_http_body, stream_utf8_chunks},
 };
 
 #[derive(Debug, Clone)]
@@ -22,11 +22,15 @@ impl Default for UreqHttpClient {
 
 impl BackendHttpClient for UreqHttpClient {
   fn post_json(&self, request: HttpRequest) -> Result<HttpResponse, BackendError> {
-    let body = serde_json::to_vec(&request.body)?;
-    let mut response = self
-      .build_request(&request)?
-      .send(body.as_slice())
-      .map_err(|error| BackendError::Http(error.to_string()))?;
+    let mut request = request;
+    let body = serialize_http_body(&request.body, &mut request.headers)?;
+    let mut response =
+      self
+        .build_request(&request)?
+        .send(body.as_slice())
+        .map_err(|error| BackendError::Transport {
+          message: error.to_string(),
+        })?;
 
     let status = response.status().as_u16();
 
@@ -46,11 +50,15 @@ impl BackendHttpClient for UreqHttpClient {
     request: HttpRequest,
     on_chunk: &mut dyn FnMut(&str) -> Result<(), BackendError>,
   ) -> Result<(), BackendError> {
-    let body = serde_json::to_vec(&request.body)?;
-    let mut response = self
-      .build_request(&request)?
-      .send(body.as_slice())
-      .map_err(|error| BackendError::Http(error.to_string()))?;
+    let mut request = request;
+    let body = serialize_http_body(&request.body, &mut request.headers)?;
+    let mut response =
+      self
+        .build_request(&request)?
+        .send(body.as_slice())
+        .map_err(|error| BackendError::Transport {
+          message: error.to_string(),
+        })?;
 
     let status = response.status().as_u16();
 
@@ -97,6 +105,8 @@ fn read_response_text(response: &mut ureq::http::Response<ureq::Body>) -> Result
     .body_mut()
     .as_reader()
     .read_to_end(&mut bytes)
-    .map_err(|error| BackendError::Http(error.to_string()))?;
+    .map_err(|error| BackendError::Transport {
+      message: error.to_string(),
+    })?;
   Ok(String::from_utf8_lossy(&bytes).to_string())
 }

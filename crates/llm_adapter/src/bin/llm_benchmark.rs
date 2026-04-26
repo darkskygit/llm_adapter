@@ -11,7 +11,7 @@ use anyhow::{Context, Result, anyhow};
 use base64::Engine;
 use clap::{Parser, Subcommand};
 use llm_adapter::{
-  backend::{BackendConfig, BackendProtocol, BackendRequestLayer, DefaultHttpClient, dispatch_request},
+  backend::{BackendConfig, BackendRequestLayer, ChatProtocol, DefaultHttpClient, dispatch_request},
   core::{CoreContent, CoreMessage, CoreRequest, CoreRole},
 };
 use rand::prelude::IndexedRandom;
@@ -250,7 +250,7 @@ pub enum ProviderConfig {
     #[serde(default)]
     auth_token_env: Option<String>,
     #[serde(default)]
-    protocol: Option<BackendProtocol>,
+    protocol: Option<ChatProtocol>,
     #[serde(default)]
     request_layer: Option<BackendRequestLayer>,
     #[serde(default)]
@@ -264,7 +264,7 @@ pub enum ProviderConfig {
     #[serde(default)]
     auth_token_env: Option<String>,
     #[serde(default)]
-    protocol: Option<BackendProtocol>,
+    protocol: Option<ChatProtocol>,
     #[serde(default)]
     request_layer: Option<BackendRequestLayer>,
     #[serde(default)]
@@ -278,7 +278,7 @@ pub enum ProviderConfig {
     #[serde(default)]
     auth_token_env: Option<String>,
     #[serde(default)]
-    protocol: Option<BackendProtocol>,
+    protocol: Option<ChatProtocol>,
     #[serde(default)]
     request_layer: Option<BackendRequestLayer>,
     #[serde(default)]
@@ -292,7 +292,7 @@ pub enum ProviderConfig {
     #[serde(default)]
     api_key_env: Option<String>,
     #[serde(default)]
-    protocol: Option<BackendProtocol>,
+    protocol: Option<ChatProtocol>,
     #[serde(default)]
     request_layer: Option<BackendRequestLayer>,
     #[serde(default)]
@@ -340,7 +340,7 @@ impl ProviderConfig {
         headers,
       } => {
         let auth_token = resolve_token(auth_token, auth_token_env.as_deref(), None)?;
-        let protocol = protocol.unwrap_or(BackendProtocol::OpenaiChatCompletions);
+        let protocol = protocol.unwrap_or(ChatProtocol::OpenaiChatCompletions);
         Ok(ResolvedProvider {
           name: provider_name.to_string(),
           protocol,
@@ -371,7 +371,7 @@ impl ProviderConfig {
 
         Ok(ResolvedProvider {
           name: provider_name.to_string(),
-          protocol: protocol.unwrap_or(BackendProtocol::OpenaiChatCompletions),
+          protocol: protocol.unwrap_or(ChatProtocol::OpenaiChatCompletions),
           backend: BackendConfig {
             base_url: base_url.clone(),
             auth_token,
@@ -398,7 +398,7 @@ impl ProviderConfig {
 
         Ok(ResolvedProvider {
           name: provider_name.to_string(),
-          protocol: BackendProtocol::AnthropicMessages,
+          protocol: ChatProtocol::AnthropicMessages,
           backend: BackendConfig {
             base_url: base_url.clone(),
             auth_token,
@@ -489,7 +489,7 @@ impl Default for BenchmarkConfig {
         base_url: "http://localhost:11434".to_string(),
         auth_token: None,
         auth_token_env: None,
-        protocol: Some(BackendProtocol::OpenaiChatCompletions),
+        protocol: Some(ChatProtocol::OpenaiChatCompletions),
         request_layer: Some(BackendRequestLayer::ChatCompletions),
         headers: BTreeMap::new(),
       },
@@ -500,7 +500,7 @@ impl Default for BenchmarkConfig {
         base_url: "http://localhost:8080".to_string(),
         auth_token: None,
         auth_token_env: None,
-        protocol: Some(BackendProtocol::OpenaiChatCompletions),
+        protocol: Some(ChatProtocol::OpenaiChatCompletions),
         request_layer: Some(BackendRequestLayer::ChatCompletions),
         headers: BTreeMap::new(),
       },
@@ -511,7 +511,7 @@ impl Default for BenchmarkConfig {
         base_url: "http://localhost:1234".to_string(),
         auth_token: None,
         auth_token_env: None,
-        protocol: Some(BackendProtocol::OpenaiChatCompletions),
+        protocol: Some(ChatProtocol::OpenaiChatCompletions),
         request_layer: Some(BackendRequestLayer::ChatCompletions),
         headers: BTreeMap::new(),
       },
@@ -735,7 +735,7 @@ struct BenchmarkRunner {
 #[derive(Debug, Clone)]
 struct ResolvedProvider {
   name: String,
-  protocol: BackendProtocol,
+  protocol: ChatProtocol,
   backend: BackendConfig,
 }
 
@@ -940,7 +940,7 @@ impl BenchmarkRunner {
 fn worker_loop(
   client: Arc<DefaultHttpClient>,
   backend: BackendConfig,
-  protocol: BackendProtocol,
+  protocol: ChatProtocol,
   request: CoreRequest,
   num_requests: usize,
   worker_id: usize,

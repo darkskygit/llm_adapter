@@ -3,20 +3,24 @@ use serde_json::Value;
 use super::{
   super::{
     core::{
-      CoreContent, CoreRequest, CoreResponse, EmbeddingRequest, EmbeddingResponse, RerankRequest, RerankResponse,
-      StreamEvent, StructuredRequest, StructuredResponse,
+      CoreContent, CoreRequest, CoreResponse, EmbeddingRequest, EmbeddingResponse, ImageRequest, ImageResponse,
+      RerankRequest, RerankResponse, StreamEvent, StructuredRequest, StructuredResponse,
     },
-    protocol::{ProtocolError, anthropic, gemini, openai},
+    protocol::{ProtocolError, anthropic, fal, gemini, openai},
     stream::{
       AnthropicStreamParser, GeminiStreamParser, IncrementalSseEncoder, OpenaiChatStreamParser,
       OpenaiResponsesStreamParser, SseFrame, SseFrameDecoder, StreamEncodingTarget, StreamParseError, encode_sse_frame,
     },
   },
-  BackendConfig, BackendError, BackendHttpClient, BackendProtocol, BackendRequestLayer, HttpRequest,
-  request_layer::{build_extra_headers, resolve_request_layer},
+  BackendConfig, BackendError, BackendHttpClient, BackendRequestLayer, ChatProtocol, EmbeddingProtocol, HttpBody,
+  HttpRequest, ImageProtocol, RerankProtocol, StructuredProtocol,
+  request_layer::{
+    build_extra_headers, resolve_chat_request_layer, resolve_embedding_request_layer, resolve_image_request_layer,
+    resolve_rerank_request_layer, resolve_structured_request_layer,
+  },
 };
 
-impl BackendProtocol {
+impl ChatProtocol {
   fn encode_request(
     &self,
     request: &CoreRequest,
@@ -25,22 +29,24 @@ impl BackendProtocol {
     base_url: &str,
   ) -> Value {
     match self {
-      BackendProtocol::OpenaiChatCompletions => openai::chat::request::encode(request, stream),
-      BackendProtocol::OpenaiResponses => openai::responses::request::encode(request, stream),
-      BackendProtocol::AnthropicMessages => anthropic::request::encode(request, stream),
-      BackendProtocol::GeminiGenerateContent => gemini::request::encode(request, stream, request_layer, base_url),
+      ChatProtocol::OpenaiChatCompletions => openai::chat::request::encode(request, stream),
+      ChatProtocol::OpenaiResponses => openai::responses::request::encode(request, stream),
+      ChatProtocol::AnthropicMessages => anthropic::request::encode(request, stream),
+      ChatProtocol::GeminiGenerateContent => gemini::request::encode(request, stream, request_layer, base_url),
     }
   }
 
   fn decode_response(&self, body: &Value) -> Result<CoreResponse, ProtocolError> {
     match self {
-      BackendProtocol::OpenaiChatCompletions => openai::chat::response::decode(body),
-      BackendProtocol::OpenaiResponses => openai::responses::response::decode(body),
-      BackendProtocol::AnthropicMessages => anthropic::response::decode(body),
-      BackendProtocol::GeminiGenerateContent => gemini::response::decode(body),
+      ChatProtocol::OpenaiChatCompletions => openai::chat::response::decode(body),
+      ChatProtocol::OpenaiResponses => openai::responses::response::decode(body),
+      ChatProtocol::AnthropicMessages => anthropic::response::decode(body),
+      ChatProtocol::GeminiGenerateContent => gemini::response::decode(body),
     }
   }
+}
 
+impl StructuredProtocol {
   fn encode_structured_request(
     &self,
     request: &StructuredRequest,
@@ -48,21 +54,25 @@ impl BackendProtocol {
     base_url: &str,
   ) -> Result<Value, ProtocolError> {
     match self {
-      BackendProtocol::OpenaiChatCompletions
-      | BackendProtocol::OpenaiResponses
-      | BackendProtocol::GeminiGenerateContent => {
-        Ok(self.encode_request(&request.as_core_request(), false, request_layer, base_url))
-      }
-      BackendProtocol::AnthropicMessages => Err(ProtocolError::InvalidValue {
-        field: "protocol",
-        message: "structured dispatch is unsupported for anthropic_messages".to_string(),
-      }),
+      StructuredProtocol::OpenaiChatCompletions => Ok(openai::chat::request::encode(&request.as_core_request(), false)),
+      StructuredProtocol::OpenaiResponses => Ok(openai::responses::request::encode(&request.as_core_request(), false)),
+      StructuredProtocol::GeminiGenerateContent => Ok(gemini::request::encode(
+        &request.as_core_request(),
+        false,
+        request_layer,
+        base_url,
+      )),
     }
   }
 
   fn decode_structured_response(&self, body: &Value) -> Result<StructuredResponse, BackendError> {
-    let response = self.decode_response(body).map_err(map_protocol_error)?;
-    let output_text = extract_text_output(&response).map_err(map_protocol_error)?;
+    let response = match self {
+      StructuredProtocol::OpenaiChatCompletions => openai::chat::response::decode(body),
+      StructuredProtocol::OpenaiResponses => openai::responses::response::decode(body),
+      StructuredProtocol::GeminiGenerateContent => gemini::response::decode(body),
+    }
+    .map_err(map_response_protocol_error)?;
+    let output_text = extract_text_output(&response).map_err(map_response_protocol_error)?;
     let output_json = parse_structured_output(&output_text).ok_or_else(|| BackendError::InvalidStructuredOutput {
       message: format!(
         "structured response did not contain valid JSON: {}",
@@ -79,64 +89,61 @@ impl BackendProtocol {
       reasoning_details: response.reasoning_details,
     })
   }
+}
 
+impl EmbeddingProtocol {
   fn encode_embedding_request(&self, request: &EmbeddingRequest) -> Result<Value, ProtocolError> {
     match self {
-      BackendProtocol::OpenaiChatCompletions | BackendProtocol::OpenaiResponses => {
-        Ok(openai::embedding::encode(request))
-      }
-      BackendProtocol::GeminiGenerateContent => Ok(gemini::embedding::encode(request)),
-      BackendProtocol::AnthropicMessages => Err(ProtocolError::InvalidValue {
-        field: "protocol",
-        message: "embedding dispatch is unsupported for anthropic_messages".to_string(),
-      }),
+      EmbeddingProtocol::Openai => Ok(openai::embedding::encode(request)),
+      EmbeddingProtocol::Gemini => Ok(gemini::embedding::encode(request)),
     }
   }
 
   fn decode_embedding_response(&self, body: &Value) -> Result<EmbeddingResponse, ProtocolError> {
     match self {
-      BackendProtocol::OpenaiChatCompletions | BackendProtocol::OpenaiResponses => openai::embedding::decode(body),
-      BackendProtocol::GeminiGenerateContent => gemini::embedding::decode(body),
-      BackendProtocol::AnthropicMessages => Err(ProtocolError::InvalidValue {
-        field: "protocol",
-        message: "embedding dispatch is unsupported for anthropic_messages".to_string(),
-      }),
+      EmbeddingProtocol::Openai => openai::embedding::decode(body),
+      EmbeddingProtocol::Gemini => gemini::embedding::decode(body),
     }
   }
+}
 
+impl RerankProtocol {
   fn encode_rerank_request(&self, request: &RerankRequest, candidate_index: usize) -> Result<Value, ProtocolError> {
     match self {
-      BackendProtocol::OpenaiChatCompletions => Ok(openai::chat::rerank::encode(request, candidate_index)?),
-      BackendProtocol::OpenaiResponses => Err(ProtocolError::InvalidValue {
-        field: "protocol",
-        message: "rerank dispatch is unsupported for openai_responses".to_string(),
-      }),
-      BackendProtocol::AnthropicMessages => Err(ProtocolError::InvalidValue {
-        field: "protocol",
-        message: "rerank dispatch is unsupported for anthropic_messages".to_string(),
-      }),
-      BackendProtocol::GeminiGenerateContent => Err(ProtocolError::InvalidValue {
-        field: "protocol",
-        message: "rerank dispatch is unsupported for gemini_generate_content".to_string(),
-      }),
+      RerankProtocol::OpenaiChatLogprobs | RerankProtocol::CloudflareWorkersAi => {
+        Ok(openai::chat::rerank::encode(request, candidate_index)?)
+      }
     }
   }
 
   fn decode_rerank_response(&self, body: &Value, request: &RerankRequest) -> Result<(String, f64), ProtocolError> {
     match self {
-      BackendProtocol::OpenaiChatCompletions => openai::chat::rerank::decode(body, request),
-      BackendProtocol::OpenaiResponses => Err(ProtocolError::InvalidValue {
-        field: "protocol",
-        message: "rerank dispatch is unsupported for openai_responses".to_string(),
-      }),
-      BackendProtocol::AnthropicMessages => Err(ProtocolError::InvalidValue {
-        field: "protocol",
-        message: "rerank dispatch is unsupported for anthropic_messages".to_string(),
-      }),
-      BackendProtocol::GeminiGenerateContent => Err(ProtocolError::InvalidValue {
-        field: "protocol",
-        message: "rerank dispatch is unsupported for gemini_generate_content".to_string(),
-      }),
+      RerankProtocol::OpenaiChatLogprobs | RerankProtocol::CloudflareWorkersAi => {
+        openai::chat::rerank::decode(body, request)
+      }
+    }
+  }
+}
+
+impl ImageProtocol {
+  fn encode_image_request(
+    &self,
+    request: &ImageRequest,
+    request_layer: BackendRequestLayer,
+    base_url: &str,
+  ) -> Result<HttpBody, ProtocolError> {
+    match self {
+      ImageProtocol::OpenaiImages => openai::images::encode(request),
+      ImageProtocol::GeminiGenerateContent => gemini::image::encode(request, request_layer, base_url),
+      ImageProtocol::FalImage => Ok(HttpBody::Json(fal::encode(request)?)),
+    }
+  }
+
+  fn decode_image_response(&self, body: &Value, request: &ImageRequest) -> Result<ImageResponse, BackendError> {
+    match self {
+      ImageProtocol::OpenaiImages => openai::images::decode(body, request),
+      ImageProtocol::GeminiGenerateContent => gemini::image::decode(body).map_err(map_response_protocol_error),
+      ImageProtocol::FalImage => fal::decode(body),
     }
   }
 }
@@ -149,12 +156,12 @@ enum IncrementalStreamParser {
 }
 
 impl IncrementalStreamParser {
-  fn new(protocol: &BackendProtocol) -> Self {
+  fn new(protocol: &ChatProtocol) -> Self {
     match protocol {
-      BackendProtocol::OpenaiChatCompletions => Self::OpenaiChat(OpenaiChatStreamParser::default()),
-      BackendProtocol::OpenaiResponses => Self::OpenaiResponses(OpenaiResponsesStreamParser::default()),
-      BackendProtocol::AnthropicMessages => Self::Anthropic(AnthropicStreamParser::default()),
-      BackendProtocol::GeminiGenerateContent => Self::Gemini(GeminiStreamParser::default()),
+      ChatProtocol::OpenaiChatCompletions => Self::OpenaiChat(OpenaiChatStreamParser::default()),
+      ChatProtocol::OpenaiResponses => Self::OpenaiResponses(OpenaiResponsesStreamParser::default()),
+      ChatProtocol::AnthropicMessages => Self::Anthropic(AnthropicStreamParser::default()),
+      ChatProtocol::GeminiGenerateContent => Self::Gemini(GeminiStreamParser::default()),
     }
   }
 
@@ -179,12 +186,12 @@ impl IncrementalStreamParser {
 
 fn build_http_request(
   config: &BackendConfig,
-  protocol: &BackendProtocol,
+  protocol: &ChatProtocol,
   request: &CoreRequest,
   stream: bool,
 ) -> Result<HttpRequest, BackendError> {
-  request.validate().map_err(map_protocol_error)?;
-  let request_layer = resolve_request_layer(config, protocol)?;
+  request.validate().map_err(map_request_protocol_error)?;
+  let request_layer = resolve_chat_request_layer(config, protocol)?;
   let mut headers = request_layer.build_headers(config, stream);
   headers.extend(build_extra_headers(config));
 
@@ -193,28 +200,30 @@ fn build_http_request(
   Ok(HttpRequest {
     url: request_layer.build_url(&config.base_url, &request.model, stream),
     headers,
-    body,
+    body: HttpBody::Json(body),
     timeout_ms: config.timeout_ms,
   })
 }
 
 fn build_structured_http_request(
   config: &BackendConfig,
-  protocol: &BackendProtocol,
+  protocol: &StructuredProtocol,
   request: &StructuredRequest,
 ) -> Result<HttpRequest, BackendError> {
-  request.validate().map_err(map_protocol_error)?;
-  let request_layer = resolve_request_layer(config, protocol)?;
+  request.validate().map_err(map_request_protocol_error)?;
+  let request_layer = resolve_structured_request_layer(config, protocol)?;
   let mut headers = request_layer.build_headers(config, false);
   headers.extend(build_extra_headers(config));
 
   Ok(HttpRequest {
     url: request_layer.build_url(&config.base_url, &request.model, false),
     headers,
-    body: request_layer.rewrite_body(
-      protocol
-        .encode_structured_request(request, request_layer, &config.base_url)
-        .map_err(map_protocol_error)?,
+    body: HttpBody::Json(
+      request_layer.rewrite_body(
+        protocol
+          .encode_structured_request(request, request_layer, &config.base_url)
+          .map_err(map_request_protocol_error)?,
+      ),
     ),
     timeout_ms: config.timeout_ms,
   })
@@ -222,18 +231,24 @@ fn build_structured_http_request(
 
 fn build_embedding_http_request(
   config: &BackendConfig,
-  protocol: &BackendProtocol,
+  protocol: &EmbeddingProtocol,
   request: &EmbeddingRequest,
 ) -> Result<HttpRequest, BackendError> {
-  request.validate().map_err(map_protocol_error)?;
-  let request_layer = resolve_request_layer(config, protocol)?;
+  request.validate().map_err(map_request_protocol_error)?;
+  let request_layer = resolve_embedding_request_layer(config, protocol)?;
   let mut headers = request_layer.build_embedding_headers(config);
   headers.extend(build_extra_headers(config));
 
   Ok(HttpRequest {
     url: request_layer.build_embedding_url(&config.base_url, &request.model)?,
     headers,
-    body: request_layer.rewrite_embedding_body(protocol.encode_embedding_request(request).map_err(map_protocol_error)?),
+    body: HttpBody::Json(
+      request_layer.rewrite_embedding_body(
+        protocol
+          .encode_embedding_request(request)
+          .map_err(map_request_protocol_error)?,
+      ),
+    ),
     timeout_ms: config.timeout_ms,
   })
 }
@@ -241,7 +256,7 @@ fn build_embedding_http_request(
 fn build_rerank_http_request(
   request_layer: &BackendRequestLayer,
   config: &BackendConfig,
-  protocol: &BackendProtocol,
+  protocol: &RerankProtocol,
   request: &RerankRequest,
   candidate_index: usize,
 ) -> Result<HttpRequest, BackendError> {
@@ -251,11 +266,39 @@ fn build_rerank_http_request(
   Ok(HttpRequest {
     url: request_layer.build_rerank_url(&config.base_url, &request.model)?,
     headers,
-    body: request_layer.rewrite_rerank_body(
-      protocol
-        .encode_rerank_request(request, candidate_index)
-        .map_err(map_protocol_error)?,
+    body: HttpBody::Json(
+      request_layer.rewrite_rerank_body(
+        protocol
+          .encode_rerank_request(request, candidate_index)
+          .map_err(map_request_protocol_error)?,
+      ),
     ),
+    timeout_ms: config.timeout_ms,
+  })
+}
+
+pub fn build_image_http_request(
+  config: &BackendConfig,
+  protocol: &ImageProtocol,
+  request: &ImageRequest,
+) -> Result<HttpRequest, BackendError> {
+  request.validate().map_err(map_request_protocol_error)?;
+  let request_layer = resolve_image_request_layer(config, protocol)?;
+  let mut headers = request_layer.build_headers(config, false);
+  headers.extend(build_extra_headers(config));
+  let edit = request.is_edit();
+  let body = protocol
+    .encode_image_request(request, request_layer, &config.base_url)
+    .map_err(map_request_protocol_error)?;
+  let body = match body {
+    HttpBody::Json(body) => HttpBody::Json(request_layer.rewrite_body(body)),
+    body => body,
+  };
+
+  Ok(HttpRequest {
+    url: request_layer.build_image_url(&config.base_url, request.model(), edit),
+    headers,
+    body,
     timeout_ms: config.timeout_ms,
   })
 }
@@ -263,17 +306,19 @@ fn build_rerank_http_request(
 pub fn dispatch_request(
   client: &dyn BackendHttpClient,
   config: &BackendConfig,
-  protocol: BackendProtocol,
+  protocol: ChatProtocol,
   request: &CoreRequest,
 ) -> Result<CoreResponse, BackendError> {
   let response = client.post_json(build_http_request(config, &protocol, request, false)?)?;
-  protocol.decode_response(&response.body).map_err(map_protocol_error)
+  protocol
+    .decode_response(&response.body)
+    .map_err(map_response_protocol_error)
 }
 
 pub fn dispatch_structured_request(
   client: &dyn BackendHttpClient,
   config: &BackendConfig,
-  protocol: BackendProtocol,
+  protocol: StructuredProtocol,
   request: &StructuredRequest,
 ) -> Result<StructuredResponse, BackendError> {
   let response = client.post_json(build_structured_http_request(config, &protocol, request)?)?;
@@ -283,23 +328,23 @@ pub fn dispatch_structured_request(
 pub fn dispatch_embedding_request(
   client: &dyn BackendHttpClient,
   config: &BackendConfig,
-  protocol: BackendProtocol,
+  protocol: EmbeddingProtocol,
   request: &EmbeddingRequest,
 ) -> Result<EmbeddingResponse, BackendError> {
   let response = client.post_json(build_embedding_http_request(config, &protocol, request)?)?;
   protocol
     .decode_embedding_response(&response.body)
-    .map_err(map_protocol_error)
+    .map_err(map_response_protocol_error)
 }
 
 pub fn dispatch_rerank_request(
   client: &dyn BackendHttpClient,
   config: &BackendConfig,
-  protocol: BackendProtocol,
+  protocol: RerankProtocol,
   request: &RerankRequest,
 ) -> Result<RerankResponse, BackendError> {
-  request.validate().map_err(map_protocol_error)?;
-  let request_layer = resolve_request_layer(config, &protocol)?;
+  request.validate().map_err(map_request_protocol_error)?;
+  let request_layer = resolve_rerank_request_layer(config, &protocol)?;
 
   if let Some(response) = request_layer.dispatch_rerank(client, config, &protocol, request)? {
     return Ok(response);
@@ -318,7 +363,7 @@ pub fn dispatch_rerank_request(
     )?)?;
     let (response_model, score) = protocol
       .decode_rerank_response(&response.body, request)
-      .map_err(map_protocol_error)?;
+      .map_err(map_response_protocol_error)?;
     if model.is_none() {
       model = Some(response_model);
     }
@@ -331,10 +376,44 @@ pub fn dispatch_rerank_request(
   })
 }
 
+pub fn dispatch_image_request(
+  client: &dyn BackendHttpClient,
+  config: &BackendConfig,
+  protocol: ImageProtocol,
+  request: &ImageRequest,
+) -> Result<ImageResponse, BackendError> {
+  let response = client.post_json(build_image_http_request(config, &protocol, request)?)?;
+  protocol.decode_image_response(&response.body, request)
+}
+
+pub fn dispatch_prepared_image_with_fallback(
+  client: &dyn BackendHttpClient,
+  routes: &[(crate::router::RoutedImageBackend, ImageRequest)],
+) -> Result<(String, ImageResponse), BackendError> {
+  let mut last_error = None;
+
+  for (route, request) in routes {
+    let mut routed_request = request.clone();
+    routed_request.set_model(route.model.clone());
+    match dispatch_image_request(client, &route.config, route.protocol, &routed_request) {
+      Ok(response) if !response.images.is_empty() => return Ok((route.provider_id.clone(), response)),
+      Ok(_) => {
+        last_error = Some(BackendError::InvalidResponse {
+          field: "images",
+          message: "expected at least one image".to_string(),
+        })
+      }
+      Err(error) => last_error = Some(error),
+    }
+  }
+
+  Err(last_error.unwrap_or(BackendError::NoBackendAvailable))
+}
+
 pub fn collect_stream_events(
   client: &dyn BackendHttpClient,
   config: &BackendConfig,
-  protocol: BackendProtocol,
+  protocol: ChatProtocol,
   request: &CoreRequest,
 ) -> Result<Vec<StreamEvent>, BackendError> {
   let mut events = Vec::new();
@@ -348,7 +427,7 @@ pub fn collect_stream_events(
 pub fn dispatch_stream_events_with<F>(
   client: &dyn BackendHttpClient,
   config: &BackendConfig,
-  protocol: BackendProtocol,
+  protocol: ChatProtocol,
   request: &CoreRequest,
   mut on_event: F,
 ) -> Result<(), BackendError>
@@ -383,7 +462,7 @@ where
 pub fn collect_stream_encoded(
   client: &dyn BackendHttpClient,
   config: &BackendConfig,
-  source_protocol: BackendProtocol,
+  source_protocol: ChatProtocol,
   target: StreamEncodingTarget,
   request: &CoreRequest,
 ) -> Result<String, BackendError> {
@@ -398,7 +477,7 @@ pub fn collect_stream_encoded(
 pub fn dispatch_stream_encoded_with<F>(
   client: &dyn BackendHttpClient,
   config: &BackendConfig,
-  source_protocol: BackendProtocol,
+  source_protocol: ChatProtocol,
   target: StreamEncodingTarget,
   request: &CoreRequest,
   mut on_chunk: F,
@@ -423,10 +502,28 @@ where
   Ok(())
 }
 
-fn map_protocol_error(error: ProtocolError) -> BackendError {
+fn map_request_protocol_error(error: ProtocolError) -> BackendError {
   match error {
-    ProtocolError::MissingField(field) => BackendError::InvalidResponse(field),
-    ProtocolError::InvalidValue { field, .. } => BackendError::InvalidResponse(field),
+    ProtocolError::MissingResponseField(field) => BackendError::InvalidRequest {
+      field,
+      message: "missing field".to_string(),
+    },
+    ProtocolError::InvalidRequest { field, message } | ProtocolError::InvalidResponse { field, message } => {
+      BackendError::InvalidRequest { field, message }
+    }
+    ProtocolError::Json(error) => BackendError::Json(error),
+  }
+}
+
+fn map_response_protocol_error(error: ProtocolError) -> BackendError {
+  match error {
+    ProtocolError::MissingResponseField(field) => BackendError::InvalidResponse {
+      field,
+      message: "missing field".to_string(),
+    },
+    ProtocolError::InvalidRequest { field, message } | ProtocolError::InvalidResponse { field, message } => {
+      BackendError::InvalidResponse { field, message }
+    }
     ProtocolError::Json(error) => BackendError::Json(error),
   }
 }
@@ -442,7 +539,7 @@ fn extract_text_output(response: &CoreResponse) -> Result<String, ProtocolError>
   }
 
   if text.is_empty() {
-    Err(ProtocolError::InvalidValue {
+    Err(ProtocolError::InvalidResponse {
       field: "message.content",
       message: "structured response did not contain text content".to_string(),
     })

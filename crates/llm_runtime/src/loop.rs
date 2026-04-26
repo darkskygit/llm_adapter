@@ -102,7 +102,7 @@ mod tests {
       &mut messages,
       4,
       |_| Ok(rounds.next().expect("missing round outcome")),
-      |call| {
+      |call: &AccumulatedToolCall| {
         Ok(ToolExecutionResult {
           call_id: call.id.clone(),
           name: call.name.clone(),
@@ -113,7 +113,7 @@ mod tests {
           is_error: Some(false),
         })
       },
-      |event| {
+      |event: &ToolLoopEvent| {
         emitted.push(event.clone());
         Ok(())
       },
@@ -160,8 +160,8 @@ mod tests {
           final_done: None,
         })
       },
-      |_| unreachable!("should not execute tool when max steps reached"),
-      |_| Ok(()),
+      |_: &AccumulatedToolCall| unreachable!("should not execute tool when max steps reached"),
+      |_: &ToolLoopEvent| Ok(()),
       || "ToolCallLoop max steps reached".to_string(),
     )
     .unwrap_err();

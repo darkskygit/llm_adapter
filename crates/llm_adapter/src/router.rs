@@ -5,7 +5,7 @@
 
 use crate::{
   backend::{
-    BackendConfig, BackendError, BackendHttpClient, BackendProtocol, dispatch_request, dispatch_stream_events_with,
+    BackendConfig, BackendError, BackendHttpClient, ChatProtocol, dispatch_request, dispatch_stream_events_with,
   },
   core::{CoreRequest, CoreResponse, StreamEvent},
 };
@@ -13,7 +13,15 @@ use crate::{
 #[derive(Debug, Clone)]
 pub struct RoutedBackend {
   pub provider_id: String,
-  pub protocol: BackendProtocol,
+  pub protocol: ChatProtocol,
+  pub model: String,
+  pub config: BackendConfig,
+}
+
+#[derive(Debug, Clone)]
+pub struct RoutedImageBackend {
+  pub provider_id: String,
+  pub protocol: crate::backend::ImageProtocol,
   pub model: String,
   pub config: BackendConfig,
 }
@@ -134,13 +142,13 @@ mod tests {
     let routes = vec![
       RoutedBackend {
         provider_id: "openai-primary".to_string(),
-        protocol: BackendProtocol::OpenaiChatCompletions,
+        protocol: ChatProtocol::OpenaiChatCompletions,
         model: "gpt-4.1".to_string(),
         config: sample_backend_config(false),
       },
       RoutedBackend {
         provider_id: "openai-fallback".to_string(),
-        protocol: BackendProtocol::OpenaiChatCompletions,
+        protocol: ChatProtocol::OpenaiChatCompletions,
         model: "gpt-4.1".to_string(),
         config: sample_backend_config(false),
       },
@@ -173,13 +181,13 @@ mod tests {
     let routes = vec![
       RoutedBackend {
         provider_id: "anthropic-no-stream".to_string(),
-        protocol: BackendProtocol::AnthropicMessages,
+        protocol: ChatProtocol::AnthropicMessages,
         model: "claude-sonnet-4-5-20250929".to_string(),
         config: sample_backend_config(true),
       },
       RoutedBackend {
         provider_id: "openai-stream".to_string(),
-        protocol: BackendProtocol::OpenaiChatCompletions,
+        protocol: ChatProtocol::OpenaiChatCompletions,
         model: "gpt-4.1".to_string(),
         config: sample_backend_config(false),
       },
@@ -223,23 +231,25 @@ mod tests {
     let routes = vec![
       RoutedBackend {
         provider_id: "openai-primary".to_string(),
-        protocol: BackendProtocol::OpenaiChatCompletions,
+        protocol: ChatProtocol::OpenaiChatCompletions,
         model: "gpt-4.1".to_string(),
         config: sample_backend_config(false),
       },
       RoutedBackend {
         provider_id: "openai-fallback".to_string(),
-        protocol: BackendProtocol::OpenaiChatCompletions,
+        protocol: ChatProtocol::OpenaiChatCompletions,
         model: "gpt-4.1".to_string(),
         config: sample_backend_config(false),
       },
     ];
 
     let result = dispatch_stream_with_fallback(&client, &routes, &sample_request(), |_event| {
-      Err(BackendError::Http("stream consumer failed".to_string()))
+      Err(BackendError::Transport {
+        message: "stream consumer failed".to_string(),
+      })
     });
 
-    assert!(matches!(result, Err(BackendError::Http(message)) if message == "stream consumer failed"));
+    assert!(matches!(result, Err(BackendError::Transport { message }) if message == "stream consumer failed"));
   }
 
   #[test]

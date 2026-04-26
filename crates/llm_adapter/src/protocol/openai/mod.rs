@@ -1,6 +1,7 @@
 pub mod chat;
 mod common;
 pub mod embedding;
+pub mod images;
 pub mod responses;
 
 use common::{

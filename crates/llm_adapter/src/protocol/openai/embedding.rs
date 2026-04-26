@@ -24,12 +24,12 @@ pub fn decode(body: &Value) -> Result<EmbeddingResponse, ProtocolError> {
   let model = body
     .get("model")
     .and_then(Value::as_str)
-    .ok_or(ProtocolError::MissingField("model"))?
+    .ok_or(ProtocolError::MissingResponseField("model"))?
     .to_string();
   let data = body
     .get("data")
     .and_then(Value::as_array)
-    .ok_or(ProtocolError::MissingField("data"))?;
+    .ok_or(ProtocolError::MissingResponseField("data"))?;
 
   let embeddings = data
     .iter()
@@ -37,11 +37,11 @@ pub fn decode(body: &Value) -> Result<EmbeddingResponse, ProtocolError> {
       let embedding = item
         .get("embedding")
         .and_then(Value::as_array)
-        .ok_or(ProtocolError::MissingField("data[].embedding"))?;
+        .ok_or(ProtocolError::MissingResponseField("data[].embedding"))?;
       embedding
         .iter()
         .map(|value| {
-          value.as_f64().ok_or(ProtocolError::InvalidValue {
+          value.as_f64().ok_or(ProtocolError::InvalidRequest {
             field: "data[].embedding[]",
             message: "expected number".to_string(),
           })

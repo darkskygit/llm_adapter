@@ -3,18 +3,20 @@ use serde_json::{Value, json};
 use super::{
   super::{
     core::{
-      CoreContent, CoreMessage, CoreRole, EmbeddingRequest, RerankCandidate, RerankRequest, StreamEvent,
-      StructuredRequest,
+      CoreContent, CoreMessage, CoreRole, EmbeddingRequest, ImageFormat, ImageInput, ImageOptions,
+      ImageProviderOptions, ImageRequest, RerankCandidate, RerankRequest, StreamEvent, StructuredRequest,
     },
+    protocol::fal::options::{FalImageOptions, FalImageOutputFormat, FalImageSize, FalImageSizePreset},
     stream::StreamEncodingTarget,
     test_support::{
       MockHttpClient, MockHttpResponse, sample_backend_config, sample_backend_config_with_header, sample_request,
       sse_done, sse_event,
     },
   },
-  BackendError, BackendProtocol, BackendRequestLayer, HttpResponse, HttpStreamResponse, collect_stream_events,
-  dispatch_embedding_request, dispatch_request, dispatch_rerank_request, dispatch_stream_encoded_with,
-  dispatch_stream_events_with, dispatch_structured_request,
+  BackendConfig, BackendError, BackendRequestLayer, ChatProtocol, EmbeddingProtocol, HttpBody, HttpResponse,
+  HttpStreamResponse, ImageProtocol, MultipartPart, RerankProtocol, StructuredProtocol, collect_stream_events,
+  dispatch_embedding_request, dispatch_image_request, dispatch_request, dispatch_rerank_request,
+  dispatch_stream_encoded_with, dispatch_stream_events_with, dispatch_structured_request,
 };
 
 #[test]
@@ -46,7 +48,7 @@ fn should_dispatch_openai_chat_request() {
   let response = dispatch_request(
     &client,
     &sample_backend_config_with_header(false),
-    BackendProtocol::OpenaiChatCompletions,
+    ChatProtocol::OpenaiChatCompletions,
     &sample_request(),
   )
   .unwrap();
@@ -65,6 +67,286 @@ fn should_dispatch_openai_chat_request() {
       ("content-type".to_string(), "application/json".to_string()),
       ("x-test-header".to_string(), "1".to_string()),
     ]
+  );
+}
+
+#[test]
+fn should_dispatch_openai_image_generate_request() {
+  let client = MockHttpClient::with_json_responses(vec![MockHttpResponse::Json(Ok(HttpResponse {
+    status: 200,
+    body: json!({
+      "data": [{ "b64_json": "aW1n" }],
+      "usage": { "input_tokens": 3, "output_tokens": 5, "total_tokens": 8 }
+    }),
+  }))]);
+  let request = ImageRequest::generate(
+    "gpt-image-1".to_string(),
+    "draw a quiet workspace".to_string(),
+    ImageOptions {
+      n: Some(1),
+      size: Some("1024x1024".to_string()),
+      quality: Some("high".to_string()),
+      output_format: Some(ImageFormat::Webp),
+      ..Default::default()
+    },
+    ImageProviderOptions::default(),
+  );
+
+  let response = dispatch_image_request(
+    &client,
+    &BackendConfig {
+      request_layer: Some(BackendRequestLayer::OpenaiImages),
+      ..sample_backend_config(false)
+    },
+    ImageProtocol::OpenaiImages,
+    &request,
+  )
+  .unwrap();
+
+  assert_eq!(response.images[0].data_base64.as_deref(), Some("aW1n"));
+  assert_eq!(response.images[0].media_type, "image/webp");
+  assert_eq!(response.usage.unwrap().total_tokens, Some(8));
+  let requests = client.requests();
+  assert_eq!(requests[0].url, "https://api.example.com/v1/images/generations");
+  assert_eq!(requests[0].body["model"], "gpt-image-1");
+  assert_eq!(requests[0].body["quality"], "high");
+  assert_eq!(requests[0].body["output_format"], "webp");
+}
+
+#[test]
+fn should_dispatch_openai_image_edit_as_multipart() {
+  let client = MockHttpClient::with_json_responses(vec![MockHttpResponse::Json(Ok(HttpResponse {
+    status: 200,
+    body: json!({ "data": [{ "url": "https://cdn.example.com/out.png" }] }),
+  }))]);
+  let request = ImageRequest::edit(
+    "gpt-image-1".to_string(),
+    "remove background".to_string(),
+    vec![ImageInput::Data {
+      data_base64: "aW1n".to_string(),
+      media_type: "image/png".to_string(),
+      file_name: Some("in.png".to_string()),
+    }],
+    None,
+    ImageOptions::default(),
+    ImageProviderOptions::default(),
+  );
+
+  dispatch_image_request(
+    &client,
+    &BackendConfig {
+      request_layer: Some(BackendRequestLayer::OpenaiImages),
+      ..sample_backend_config(false)
+    },
+    ImageProtocol::OpenaiImages,
+    &request,
+  )
+  .unwrap();
+
+  let requests = client.requests();
+  assert_eq!(requests[0].url, "https://api.example.com/v1/images/edits");
+  assert!(matches!(
+    &requests[0].body,
+    HttpBody::Multipart(parts)
+      if parts.iter().any(|part| matches!(part, MultipartPart::Text { name, value } if name == "prompt" && value == "remove background"))
+        && parts.iter().any(|part| matches!(part, MultipartPart::File { name, file_name, media_type, bytes } if name == "image[]" && file_name == "in.png" && media_type == "image/png" && bytes == b"img"))
+  ));
+}
+
+#[test]
+fn should_reject_fal_workflow_image_request() {
+  let client = MockHttpClient::with_json_responses(vec![]);
+  let error = dispatch_image_request(
+    &client,
+    &BackendConfig {
+      base_url: "https://fal.run".to_string(),
+      request_layer: Some(BackendRequestLayer::Fal),
+      ..sample_backend_config(false)
+    },
+    ImageProtocol::FalImage,
+    &ImageRequest::generate(
+      "workflows/foo".to_string(),
+      "test".to_string(),
+      ImageOptions::default(),
+      ImageProviderOptions::default(),
+    ),
+  )
+  .unwrap_err();
+
+  assert!(error.to_string().contains("model"));
+}
+
+#[test]
+fn should_reject_fal_inline_image_input() {
+  let client = MockHttpClient::default();
+  let request = ImageRequest::edit(
+    "flux-1/schnell".to_string(),
+    "sticker".to_string(),
+    vec![ImageInput::Data {
+      data_base64: "aW1hZ2U=".to_string(),
+      media_type: "image/png".to_string(),
+      file_name: None,
+    }],
+    None,
+    ImageOptions::default(),
+    ImageProviderOptions::default(),
+  );
+
+  let error = dispatch_image_request(
+    &client,
+    &BackendConfig {
+      base_url: "https://fal.run".to_string(),
+      request_layer: Some(BackendRequestLayer::Fal),
+      ..sample_backend_config(false)
+    },
+    ImageProtocol::FalImage,
+    &request,
+  )
+  .unwrap_err();
+
+  assert!(error.to_string().contains("images"));
+}
+
+#[test]
+fn should_dispatch_fal_ordinary_image_request() {
+  let client = MockHttpClient::with_json_responses(vec![MockHttpResponse::Json(Ok(HttpResponse {
+    status: 200,
+    body: json!({
+      "images": [{ "url": "https://fal.example.com/out.webp", "content_type": "image/webp", "width": 512, "height": 512 }]
+    }),
+  }))]);
+  let request = ImageRequest::generate(
+    "flux-1/schnell".to_string(),
+    "sticker".to_string(),
+    ImageOptions {
+      seed: Some(7),
+      ..Default::default()
+    },
+    ImageProviderOptions::Fal(FalImageOptions {
+      image_size: Some(FalImageSize::Preset(FalImageSizePreset::SquareHd)),
+      num_images: Some(2),
+      enable_safety_checker: Some(false),
+      output_format: Some(FalImageOutputFormat::Webp),
+      model_name: Some("dev".to_string()),
+      ..Default::default()
+    }),
+  );
+
+  let response = dispatch_image_request(
+    &client,
+    &BackendConfig {
+      base_url: "https://fal.run".to_string(),
+      request_layer: Some(BackendRequestLayer::Fal),
+      ..sample_backend_config(false)
+    },
+    ImageProtocol::FalImage,
+    &request,
+  )
+  .unwrap();
+
+  assert_eq!(
+    response.images[0].url.as_deref(),
+    Some("https://fal.example.com/out.webp")
+  );
+  let requests = client.requests();
+  assert_eq!(requests[0].url, "https://fal.run/fal-ai/flux-1/schnell");
+  assert_eq!(requests[0].body["prompt"], "sticker");
+  assert_eq!(requests[0].body["model_name"], "dev");
+  assert_eq!(requests[0].body["seed"], 7);
+  assert_eq!(requests[0].body["image_size"], "square_hd");
+  assert_eq!(requests[0].body["num_images"], 2);
+  assert_eq!(requests[0].body["enable_safety_checker"], false);
+  assert_eq!(requests[0].body["output_format"], "webp");
+  assert_eq!(requests[0].body["sync_mode"], true);
+}
+
+#[test]
+fn should_dispatch_gemini_nano_banana_image_generate_request() {
+  let client = MockHttpClient::with_json_responses(vec![MockHttpResponse::Json(Ok(HttpResponse {
+    status: 200,
+    body: json!({
+      "candidates": [{
+        "content": {
+          "role": "model",
+          "parts": [
+            { "text": "ok" },
+            { "inlineData": { "mimeType": "image/png", "data": "aW1n" } }
+          ]
+        }
+      }]
+    }),
+  }))]);
+  let request = ImageRequest::generate(
+    "gemini-2.5-flash-image".to_string(),
+    "draw a quiet workspace".to_string(),
+    ImageOptions::default(),
+    ImageProviderOptions::default(),
+  );
+
+  let mut config = sample_backend_config(false);
+  config.base_url = "https://generativelanguage.googleapis.com/v1beta".to_string();
+  config.request_layer = Some(BackendRequestLayer::GeminiApi);
+
+  let response = dispatch_image_request(&client, &config, ImageProtocol::GeminiGenerateContent, &request).unwrap();
+
+  assert_eq!(response.images[0].data_base64.as_deref(), Some("aW1n"));
+  assert_eq!(response.images[0].media_type, "image/png");
+  assert_eq!(response.text.as_deref(), Some("ok"));
+  let requests = client.requests();
+  assert_eq!(
+    requests[0].url,
+    "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-image:generateContent"
+  );
+  assert_eq!(
+    requests[0].body["generationConfig"]["responseModalities"],
+    json!(["TEXT", "IMAGE"])
+  );
+  assert_eq!(
+    requests[0].body["contents"][0]["parts"][0]["text"],
+    "draw a quiet workspace"
+  );
+  assert!(requests[0].body.get("model").is_none());
+}
+
+#[test]
+fn should_dispatch_gemini_nano_banana_image_edit_request() {
+  let client = MockHttpClient::with_json_responses(vec![MockHttpResponse::Json(Ok(HttpResponse {
+    status: 200,
+    body: json!({
+      "candidates": [{
+        "content": {
+          "role": "model",
+          "parts": [
+            { "inlineData": { "mimeType": "image/png", "data": "ZWRpdA==" } }
+          ]
+        }
+      }]
+    }),
+  }))]);
+  let request = ImageRequest::edit(
+    "gemini-2.5-flash-image".to_string(),
+    "turn this into a clean sticker".to_string(),
+    vec![ImageInput::Data {
+      data_base64: "aW1n".to_string(),
+      media_type: "image/png".to_string(),
+      file_name: Some("source.png".to_string()),
+    }],
+    None,
+    ImageOptions::default(),
+    ImageProviderOptions::default(),
+  );
+
+  let mut config = sample_backend_config(false);
+  config.base_url = "https://generativelanguage.googleapis.com/v1beta".to_string();
+  config.request_layer = Some(BackendRequestLayer::GeminiApi);
+
+  let response = dispatch_image_request(&client, &config, ImageProtocol::GeminiGenerateContent, &request).unwrap();
+
+  assert_eq!(response.images[0].data_base64.as_deref(), Some("ZWRpdA=="));
+  let requests = client.requests();
+  assert_eq!(
+    requests[0].body["contents"][0]["parts"][1]["inlineData"],
+    json!({ "mimeType": "image/png", "data": "aW1n" })
   );
 }
 
@@ -97,7 +379,7 @@ fn should_dispatch_gemini_api_request() {
   config.base_url = "https://generativelanguage.googleapis.com/v1beta".to_string();
   config.request_layer = Some(BackendRequestLayer::GeminiApi);
 
-  let response = dispatch_request(&client, &config, BackendProtocol::GeminiGenerateContent, &request).unwrap();
+  let response = dispatch_request(&client, &config, ChatProtocol::GeminiGenerateContent, &request).unwrap();
   assert_eq!(response.id, "gem_resp_1");
 
   let requests = client.requests();
@@ -170,7 +452,7 @@ fn should_dispatch_openai_structured_request() {
   let response = dispatch_structured_request(
     &client,
     &sample_backend_config_with_header(false),
-    BackendProtocol::OpenaiResponses,
+    StructuredProtocol::OpenaiResponses,
     &request,
   )
   .unwrap();
@@ -231,7 +513,7 @@ fn should_extract_output_json_from_fenced_structured_response() {
   let response = dispatch_structured_request(
     &client,
     &sample_backend_config_with_header(false),
-    BackendProtocol::OpenaiResponses,
+    StructuredProtocol::OpenaiResponses,
     &request,
   )
   .unwrap();
@@ -291,7 +573,7 @@ fn should_fail_structured_dispatch_with_typed_error_when_output_is_not_json() {
   let error = dispatch_structured_request(
     &client,
     &sample_backend_config_with_header(false),
-    BackendProtocol::OpenaiResponses,
+    StructuredProtocol::OpenaiResponses,
     &request,
   )
   .unwrap_err();
@@ -322,7 +604,7 @@ fn should_dispatch_gemini_embedding_request() {
   let response = dispatch_embedding_request(
     &client,
     &config,
-    BackendProtocol::GeminiGenerateContent,
+    EmbeddingProtocol::Gemini,
     &EmbeddingRequest {
       model: "gemini-embedding-001".to_string(),
       inputs: vec!["hello".to_string(), "world".to_string()],
@@ -364,7 +646,7 @@ fn should_dispatch_gemini_vertex_embedding_request() {
   let response = dispatch_embedding_request(
     &client,
     &config,
-    BackendProtocol::GeminiGenerateContent,
+    EmbeddingProtocol::Gemini,
     &EmbeddingRequest {
       model: "gemini-embedding-001".to_string(),
       inputs: vec!["hello".to_string()],
@@ -425,7 +707,7 @@ fn should_dispatch_openai_rerank_request() {
   let response = dispatch_rerank_request(
     &client,
     &sample_backend_config_with_header(false),
-    BackendProtocol::OpenaiChatCompletions,
+    RerankProtocol::OpenaiChatLogprobs,
     &RerankRequest {
       model: "gpt-5.2".to_string(),
       query: "programming".to_string(),
@@ -502,7 +784,7 @@ fn should_dispatch_cloudflare_rerank_request() {
   let response = dispatch_rerank_request(
     &client,
     &config,
-    BackendProtocol::OpenaiChatCompletions,
+    RerankProtocol::CloudflareWorkersAi,
     &RerankRequest {
       model: "@cf/moonshotai/kimi-k2.5".to_string(),
       query: "programming".to_string(),
@@ -562,7 +844,7 @@ fn should_disable_thinking_for_cloudflare_logprobs_profiles() {
   let response = dispatch_rerank_request(
     &client,
     &config,
-    BackendProtocol::OpenaiChatCompletions,
+    RerankProtocol::CloudflareWorkersAi,
     &RerankRequest {
       model: "@cf/zai-org/glm-4.7-flash".to_string(),
       query: "programming".to_string(),
@@ -607,7 +889,7 @@ fn should_dispatch_cloudflare_native_bge_rerank_request() {
   let response = dispatch_rerank_request(
     &client,
     &config,
-    BackendProtocol::OpenaiChatCompletions,
+    RerankProtocol::CloudflareWorkersAi,
     &RerankRequest {
       model: "@cf/baai/bge-reranker-base".to_string(),
       query: "programming".to_string(),
@@ -639,49 +921,6 @@ fn should_dispatch_cloudflare_native_bge_rerank_request() {
   assert_eq!(requests[0].body["top_k"], 1);
   assert_eq!(requests[0].body["contexts"][0]["text"], "Rust ownership guide");
   assert_eq!(requests[0].body["contexts"][1]["text"], "Sunny and warm tomorrow");
-}
-
-#[test]
-fn should_reject_non_logprobs_rerank_protocols() {
-  let client = MockHttpClient::with_json_responses(vec![]);
-
-  let err = dispatch_rerank_request(
-    &client,
-    &sample_backend_config_with_header(false),
-    BackendProtocol::AnthropicMessages,
-    &RerankRequest {
-      model: "claude-sonnet-4-5-20250929".to_string(),
-      query: "programming".to_string(),
-      candidates: vec![RerankCandidate {
-        id: Some("rust".to_string()),
-        text: "Rust ownership guide".to_string(),
-      }],
-      top_n: None,
-    },
-  )
-  .unwrap_err();
-  assert!(matches!(err, BackendError::InvalidResponse("protocol")));
-
-  let mut gemini_config = sample_backend_config_with_header(false);
-  gemini_config.base_url = "https://generativelanguage.googleapis.com/v1beta".to_string();
-  gemini_config.request_layer = Some(BackendRequestLayer::GeminiApi);
-
-  let err = dispatch_rerank_request(
-    &client,
-    &gemini_config,
-    BackendProtocol::GeminiGenerateContent,
-    &RerankRequest {
-      model: "gemini-2.5-flash".to_string(),
-      query: "programming".to_string(),
-      candidates: vec![RerankCandidate {
-        id: Some("rust".to_string()),
-        text: "Rust ownership guide".to_string(),
-      }],
-      top_n: None,
-    },
-  )
-  .unwrap_err();
-  assert!(matches!(err, BackendError::InvalidResponse("protocol")));
 }
 
 #[test]
@@ -745,7 +984,7 @@ fn should_dispatch_openai_responses_stream() {
   let events = collect_stream_events(
     &client,
     &sample_backend_config_with_header(false),
-    BackendProtocol::OpenaiResponses,
+    ChatProtocol::OpenaiResponses,
     &sample_request(),
   )
   .unwrap();
@@ -790,15 +1029,17 @@ fn should_dispatch_stream_events_with_incrementally() {
   let result = dispatch_stream_events_with(
     &client,
     &sample_backend_config_with_header(false),
-    BackendProtocol::OpenaiResponses,
+    ChatProtocol::OpenaiResponses,
     &sample_request(),
     |event| {
       seen.push(event.clone());
-      Err(BackendError::Http("stop_after_first_event".to_string()))
+      Err(BackendError::Transport {
+        message: "stop_after_first_event".to_string(),
+      })
     },
   );
 
-  assert!(matches!(result, Err(BackendError::Http(reason)) if reason == "stop_after_first_event"));
+  assert!(matches!(result, Err(BackendError::Transport { message: reason }) if reason == "stop_after_first_event"));
   assert_eq!(seen.len(), 1);
 }
 
@@ -844,7 +1085,7 @@ fn should_dispatch_stream_encoded_with_incrementally() {
   dispatch_stream_encoded_with(
     &client,
     &sample_backend_config_with_header(false),
-    BackendProtocol::AnthropicMessages,
+    ChatProtocol::AnthropicMessages,
     StreamEncodingTarget::OpenaiResponses,
     &sample_request(),
     |chunk| {
@@ -889,7 +1130,7 @@ fn should_dispatch_anthropic_request() {
   let response = dispatch_request(
     &client,
     &sample_backend_config_with_header(false),
-    BackendProtocol::AnthropicMessages,
+    ChatProtocol::AnthropicMessages,
     &request,
   )
   .unwrap();
@@ -933,7 +1174,7 @@ fn should_apply_anthropic_request_defaults_in_dispatch() {
   dispatch_request(
     &client,
     &sample_backend_config_with_header(false),
-    BackendProtocol::AnthropicMessages,
+    ChatProtocol::AnthropicMessages,
     &request,
   )
   .unwrap();
@@ -964,7 +1205,7 @@ fn should_dispatch_vertex_anthropic_request() {
   let mut request = sample_request();
   request.model = "claude-sonnet-4-5@20250929".to_string();
 
-  dispatch_request(&client, &config, BackendProtocol::AnthropicMessages, &request).unwrap();
+  dispatch_request(&client, &config, ChatProtocol::AnthropicMessages, &request).unwrap();
   let requests = client.requests();
 
   assert_eq!(
@@ -1030,7 +1271,7 @@ fn should_dispatch_vertex_anthropic_stream() {
   let mut request = sample_request();
   request.model = "claude-sonnet-4-5@20250929".to_string();
 
-  let events = collect_stream_events(&client, &config, BackendProtocol::AnthropicMessages, &request).unwrap();
+  let events = collect_stream_events(&client, &config, ChatProtocol::AnthropicMessages, &request).unwrap();
   assert!(events.iter().any(|event| matches!(event, StreamEvent::Done { .. })));
 
   let requests = client.requests();
@@ -1097,7 +1338,7 @@ fn should_dispatch_gemini_vertex_stream() {
   let mut request = sample_request();
   request.model = "gemini-2.5-flash".to_string();
 
-  let events = collect_stream_events(&client, &config, BackendProtocol::GeminiGenerateContent, &request).unwrap();
+  let events = collect_stream_events(&client, &config, ChatProtocol::GeminiGenerateContent, &request).unwrap();
   assert!(
     events
       .iter()
@@ -1136,8 +1377,8 @@ fn should_reject_incompatible_request_layer() {
   let mut config = sample_backend_config(false);
   config.request_layer = Some(BackendRequestLayer::Responses);
 
-  let result = dispatch_request(&client, &config, BackendProtocol::AnthropicMessages, &sample_request());
-  assert!(matches!(result, Err(BackendError::InvalidConfig(_))));
+  let result = dispatch_request(&client, &config, ChatProtocol::AnthropicMessages, &sample_request());
+  assert!(matches!(result, Err(BackendError::InvalidConfig { .. })));
 }
 
 #[test]
@@ -1150,7 +1391,7 @@ fn should_surface_upstream_error() {
   let result = dispatch_request(
     &client,
     &sample_backend_config_with_header(false),
-    BackendProtocol::OpenaiChatCompletions,
+    ChatProtocol::OpenaiChatCompletions,
     &sample_request(),
   );
 

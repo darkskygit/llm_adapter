@@ -78,7 +78,7 @@ fn build_default_messages(request: &RerankRequest, candidate_index: usize) -> Re
   let candidate = request
     .candidates
     .get(candidate_index)
-    .ok_or(ProtocolError::InvalidValue {
+    .ok_or(ProtocolError::InvalidRequest {
       field: "candidates",
       message: format!("candidate index {candidate_index} is out of bounds"),
     })?;
@@ -135,7 +135,7 @@ pub fn decode(body: &Value, _request: &RerankRequest) -> Result<(String, f64), P
   let choice = response
     .choices
     .first()
-    .ok_or(ProtocolError::MissingField("openai_chat.choices[0]"))?;
+    .ok_or(ProtocolError::MissingResponseField("openai_chat.choices[0]"))?;
 
   let Some(logprobs) = &choice.logprobs else {
     return Ok((response.model, 0.0));

@@ -8,10 +8,10 @@ use super::{
 
 pub fn decode(body: &Value) -> Result<CoreResponse, ProtocolError> {
   let id = get_str(body, "id")
-    .ok_or(ProtocolError::MissingField("openai_responses.id"))?
+    .ok_or(ProtocolError::MissingResponseField("openai_responses.id"))?
     .to_string();
   let model = get_str(body, "model")
-    .ok_or(ProtocolError::MissingField("openai_responses.model"))?
+    .ok_or(ProtocolError::MissingResponseField("openai_responses.model"))?
     .to_string();
 
   let mut role = CoreRole::Assistant;

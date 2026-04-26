@@ -11,7 +11,7 @@ pub(crate) fn parse_role(role: &str, field: &'static str) -> Result<CoreRole, Pr
     "user" => Ok(CoreRole::User),
     "assistant" => Ok(CoreRole::Assistant),
     "tool" => Ok(CoreRole::Tool),
-    _ => Err(ProtocolError::InvalidValue {
+    _ => Err(ProtocolError::InvalidRequest {
       field,
       message: format!("unsupported role `{role}`"),
     }),

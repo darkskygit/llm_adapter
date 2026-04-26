@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, ops::Index};
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -7,11 +7,41 @@ use super::super::stream::StreamParseError;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum BackendProtocol {
+pub enum ChatProtocol {
   OpenaiChatCompletions,
   OpenaiResponses,
   AnthropicMessages,
   GeminiGenerateContent,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum StructuredProtocol {
+  OpenaiChatCompletions,
+  OpenaiResponses,
+  GeminiGenerateContent,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EmbeddingProtocol {
+  Openai,
+  Gemini,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RerankProtocol {
+  OpenaiChatLogprobs,
+  CloudflareWorkersAi,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ImageProtocol {
+  OpenaiImages,
+  GeminiGenerateContent,
+  FalImage,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -25,6 +55,8 @@ pub enum BackendRequestLayer {
   GeminiVertex,
   Responses,
   VertexAnthropic,
+  OpenaiImages,
+  Fal,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -45,8 +77,51 @@ pub struct BackendConfig {
 pub struct HttpRequest {
   pub url: String,
   pub headers: Vec<(String, String)>,
-  pub body: serde_json::Value,
+  pub body: HttpBody,
   pub timeout_ms: Option<u64>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum HttpBody {
+  Json(serde_json::Value),
+  Multipart(Vec<MultipartPart>),
+}
+
+impl HttpBody {
+  #[must_use]
+  pub fn as_json(&self) -> Option<&serde_json::Value> {
+    match self {
+      Self::Json(value) => Some(value),
+      Self::Multipart(_) => None,
+    }
+  }
+
+  #[must_use]
+  pub fn get(&self, key: &str) -> Option<&serde_json::Value> {
+    self.as_json()?.get(key)
+  }
+}
+
+impl Index<&str> for HttpBody {
+  type Output = serde_json::Value;
+
+  fn index(&self, index: &str) -> &Self::Output {
+    &self.as_json().expect("HTTP body is not JSON")[index]
+  }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum MultipartPart {
+  Text {
+    name: String,
+    value: String,
+  },
+  File {
+    name: String,
+    file_name: String,
+    media_type: String,
+    bytes: Vec<u8>,
+  },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -65,14 +140,16 @@ pub struct HttpStreamResponse {
 pub enum BackendError {
   #[error("no backend available")]
   NoBackendAvailable,
-  #[error("invalid backend config: {0}")]
-  InvalidConfig(String),
-  #[error("http transport error: {0}")]
-  Http(String),
+  #[error("invalid backend config: {message}")]
+  InvalidConfig { message: String },
+  #[error("invalid request field `{field}`: {message}")]
+  InvalidRequest { field: &'static str, message: String },
+  #[error("http transport error: {message}")]
+  Transport { message: String },
   #[error("upstream returned status {status}: {body}")]
   UpstreamStatus { status: u16, body: String },
-  #[error("invalid response: {0}")]
-  InvalidResponse(&'static str),
+  #[error("invalid response field `{field}`: {message}")]
+  InvalidResponse { field: &'static str, message: String },
   #[error("invalid_structured_output: {message}")]
   InvalidStructuredOutput { message: String },
   #[error("json error: {0}")]

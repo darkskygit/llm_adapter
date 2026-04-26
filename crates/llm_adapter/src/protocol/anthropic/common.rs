@@ -27,7 +27,7 @@ pub(crate) fn parse_content_blocks(
       }
       Ok(content)
     }
-    _ => Err(ProtocolError::InvalidValue {
+    _ => Err(ProtocolError::InvalidRequest {
       field: "content",
       message: "expected string or array".to_string(),
     }),
@@ -64,13 +64,13 @@ fn parse_content_block(item: &Value, mode: AnthropicContentParseMode) -> Result<
     "tool_use" => {
       let call_id = match mode {
         AnthropicContentParseMode::Request => get_str(item, "id")
-          .ok_or(ProtocolError::MissingField("content[].id"))?
+          .ok_or(ProtocolError::MissingResponseField("content[].id"))?
           .to_string(),
         AnthropicContentParseMode::Response => get_str_or(item, "id", "call_0").to_string(),
       };
       let name = match mode {
         AnthropicContentParseMode::Request => get_str(item, "name")
-          .ok_or(ProtocolError::MissingField("content[].name"))?
+          .ok_or(ProtocolError::MissingResponseField("content[].name"))?
           .to_string(),
         AnthropicContentParseMode::Response => get_str_or(item, "name", "").to_string(),
       };
@@ -86,7 +86,7 @@ fn parse_content_block(item: &Value, mode: AnthropicContentParseMode) -> Result<
     "tool_result" => {
       let call_id = match mode {
         AnthropicContentParseMode::Request => get_str(item, "tool_use_id")
-          .ok_or(ProtocolError::MissingField("content[].tool_use_id"))?
+          .ok_or(ProtocolError::MissingResponseField("content[].tool_use_id"))?
           .to_string(),
         AnthropicContentParseMode::Response => get_str_or(item, "tool_use_id", "call_0").to_string(),
       };

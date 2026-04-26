@@ -2,7 +2,7 @@ use serde::Deserialize;
 use serde_json::{Map, Value, json};
 
 use super::{
-  super::{BackendConfig, BackendError, BackendHttpClient, BackendProtocol, HttpRequest},
+  super::{BackendConfig, BackendError, BackendHttpClient, HttpBody, HttpRequest, RerankProtocol},
   RequestLayerImpl, build_bearer_headers, build_extra_headers, join_url,
 };
 use crate::core::{RerankRequest, RerankResponse};
@@ -94,7 +94,7 @@ impl RequestLayerImpl for CloudflareWorkersAiRequestLayer {
     &self,
     client: &dyn BackendHttpClient,
     config: &BackendConfig,
-    _protocol: &BackendProtocol,
+    _protocol: &RerankProtocol,
     request: &RerankRequest,
   ) -> Result<Option<RerankResponse>, BackendError> {
     if rerank_strategy_for_model(&request.model) != CloudflareRerankStrategy::NativeBge {
@@ -124,7 +124,7 @@ impl RequestLayerImpl for CloudflareWorkersAiRequestLayer {
     let response = client.post_json(HttpRequest {
       url: join_url(&config.base_url, &format!("/run/{}", request.model)),
       headers,
-      body: Value::Object(body),
+      body: HttpBody::Json(Value::Object(body)),
       timeout_ms: config.timeout_ms,
     })?;
 
