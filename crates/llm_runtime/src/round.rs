@@ -22,6 +22,42 @@ pub struct RoundProcessor {
   final_done: Option<ToolLoopEvent>,
 }
 
+#[derive(Debug, Default)]
+pub struct StreamRoundRunner {
+  processor: RoundProcessor,
+}
+
+impl StreamRoundRunner {
+  pub fn process_event<E, Emit>(&mut self, event: StreamEvent, emit: Emit) -> Result<(), E>
+  where
+    E: From<RoundProcessorError>,
+    Emit: FnMut(ToolLoopEvent) -> Result<(), E>,
+  {
+    self.process_event_with(event, E::from, emit)
+  }
+
+  pub fn process_event_with<E, MapError, Emit>(
+    &mut self,
+    event: StreamEvent,
+    map_error: MapError,
+    mut emit: Emit,
+  ) -> Result<(), E>
+  where
+    MapError: FnOnce(RoundProcessorError) -> E,
+    Emit: FnMut(ToolLoopEvent) -> Result<(), E>,
+  {
+    for loop_event in self.processor.process(event).map_err(map_error)? {
+      emit(loop_event)?;
+    }
+
+    Ok(())
+  }
+
+  pub fn finish(self) -> RoundOutcome {
+    self.processor.finish()
+  }
+}
+
 impl RoundProcessor {
   pub fn process(&mut self, event: StreamEvent) -> Result<Vec<ToolLoopEvent>, RoundProcessorError> {
     match event {
@@ -67,12 +103,29 @@ impl RoundProcessor {
   }
 }
 
+pub fn run_stream_round<E, Events, Emit>(events: Events, mut emit: Emit) -> Result<RoundOutcome, E>
+where
+  Events: IntoIterator<Item = Result<StreamEvent, E>>,
+  Emit: FnMut(ToolLoopEvent) -> Result<(), E>,
+  E: From<RoundProcessorError>,
+{
+  let mut processor = RoundProcessor::default();
+
+  for event in events {
+    for loop_event in processor.process(event?)? {
+      emit(loop_event)?;
+    }
+  }
+
+  Ok(processor.finish())
+}
+
 #[cfg(test)]
 mod tests {
   use llm_adapter::core::StreamEvent;
   use serde_json::json;
 
-  use super::RoundProcessor;
+  use super::{RoundProcessor, RoundProcessorError, run_stream_round};
   use crate::ToolLoopEvent;
 
   #[test]
@@ -126,5 +179,96 @@ mod tests {
         ..
       }] if call_id == "call_1" && name == "doc_read" && thought == "need context"
     ));
+  }
+
+  #[test]
+  fn should_run_stream_round_and_keep_done_for_finish() {
+    let events = vec![
+      Ok(StreamEvent::TextDelta {
+        text: "hello".to_string(),
+      }),
+      Ok(StreamEvent::Done {
+        finish_reason: Some("stop".to_string()),
+        usage: None,
+      }),
+    ];
+    let mut emitted = Vec::new();
+
+    let outcome = run_stream_round(events, |event| {
+      emitted.push(event);
+      Ok::<_, RoundProcessorError>(())
+    })
+    .unwrap();
+
+    assert!(matches!(
+      emitted.as_slice(),
+      [ToolLoopEvent::TextDelta { text }] if text == "hello"
+    ));
+    assert!(matches!(
+      outcome.final_done,
+      Some(ToolLoopEvent::Done {
+        finish_reason: Some(reason),
+        ..
+      }) if reason == "stop"
+    ));
+  }
+
+  #[test]
+  fn should_run_stream_round_incrementally() {
+    let mut runner = super::StreamRoundRunner::default();
+    let mut emitted = Vec::new();
+
+    runner
+      .process_event(
+        StreamEvent::TextDelta {
+          text: "hello".to_string(),
+        },
+        |event| {
+          emitted.push(event);
+          Ok::<_, RoundProcessorError>(())
+        },
+      )
+      .unwrap();
+
+    runner
+      .process_event(
+        StreamEvent::Done {
+          finish_reason: Some("stop".to_string()),
+          usage: None,
+        },
+        |event| {
+          emitted.push(event);
+          Ok::<_, RoundProcessorError>(())
+        },
+      )
+      .unwrap();
+
+    assert!(matches!(
+      emitted.as_slice(),
+      [ToolLoopEvent::TextDelta { text }] if text == "hello"
+    ));
+    assert!(matches!(
+      runner.finish().final_done,
+      Some(ToolLoopEvent::Done {
+        finish_reason: Some(reason),
+        ..
+      }) if reason == "stop"
+    ));
+  }
+
+  #[test]
+  fn should_roundtrip_tool_loop_event_serde_shape() {
+    let event = ToolLoopEvent::ToolCall {
+      call_id: "call_1".to_string(),
+      name: "doc_read".to_string(),
+      arguments: json!({ "doc_id": "a1" }),
+      arguments_text: Some("{\"doc_id\":\"a1\"}".to_string()),
+      arguments_error: None,
+      thought: Some("need context".to_string()),
+    };
+
+    let value = serde_json::to_value(&event).unwrap();
+    assert_eq!(value["type"], "tool_call");
+    assert_eq!(serde_json::from_value::<ToolLoopEvent>(value).unwrap(), event);
   }
 }

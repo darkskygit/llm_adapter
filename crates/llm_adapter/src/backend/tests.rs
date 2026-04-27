@@ -20,6 +20,37 @@ use super::{
 };
 
 #[test]
+fn should_parse_protocol_and_request_layer_aliases() {
+  assert_eq!(
+    "chat-completions".parse::<ChatProtocol>().unwrap(),
+    ChatProtocol::OpenaiChatCompletions
+  );
+  assert_eq!(
+    "openai-responses".parse::<StructuredProtocol>().unwrap(),
+    StructuredProtocol::OpenaiResponses
+  );
+  assert_eq!(
+    "openai_chat".parse::<EmbeddingProtocol>().unwrap(),
+    EmbeddingProtocol::Openai
+  );
+  assert_eq!(
+    "cloudflare-workers-ai".parse::<RerankProtocol>().unwrap(),
+    RerankProtocol::CloudflareWorkersAi
+  );
+  assert_eq!("fal-image".parse::<ImageProtocol>().unwrap(), ImageProtocol::FalImage);
+  assert_eq!(
+    "gemini-vertex".parse::<BackendRequestLayer>().unwrap(),
+    BackendRequestLayer::GeminiVertex
+  );
+}
+
+#[test]
+fn should_return_stable_parse_errors() {
+  let error = "unknown".parse::<ChatProtocol>().unwrap_err();
+  assert!(matches!(error, BackendError::InvalidRequest { field: "protocol", .. }));
+}
+
+#[test]
 fn should_dispatch_openai_chat_request() {
   let client = MockHttpClient::with_json_responses(vec![MockHttpResponse::Json(Ok(HttpResponse {
     status: 200,

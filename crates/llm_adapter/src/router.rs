@@ -5,9 +5,14 @@
 
 use crate::{
   backend::{
-    BackendConfig, BackendError, BackendHttpClient, ChatProtocol, dispatch_request, dispatch_stream_events_with,
+    BackendConfig, BackendError, BackendHttpClient, ChatProtocol, EmbeddingProtocol, RerankProtocol,
+    StructuredProtocol, dispatch_embedding_request, dispatch_request, dispatch_rerank_request,
+    dispatch_stream_events_with, dispatch_structured_request,
   },
-  core::{CoreRequest, CoreResponse, StreamEvent},
+  core::{
+    CoreRequest, CoreResponse, EmbeddingRequest, EmbeddingResponse, RerankRequest, RerankResponse, StreamEvent,
+    StructuredRequest, StructuredResponse,
+  },
 };
 
 #[derive(Debug, Clone)]
@@ -25,6 +30,35 @@ pub struct RoutedImageBackend {
   pub model: String,
   pub config: BackendConfig,
 }
+
+#[derive(Debug, Clone)]
+pub struct RoutedStructuredBackend {
+  pub provider_id: String,
+  pub protocol: StructuredProtocol,
+  pub model: String,
+  pub config: BackendConfig,
+}
+
+#[derive(Debug, Clone)]
+pub struct RoutedEmbeddingBackend {
+  pub provider_id: String,
+  pub protocol: EmbeddingProtocol,
+  pub model: String,
+  pub config: BackendConfig,
+}
+
+#[derive(Debug, Clone)]
+pub struct RoutedRerankBackend {
+  pub provider_id: String,
+  pub protocol: RerankProtocol,
+  pub model: String,
+  pub config: BackendConfig,
+}
+
+pub type PreparedChatRoute = (RoutedBackend, CoreRequest);
+pub type PreparedStructuredRoute = (RoutedStructuredBackend, StructuredRequest);
+pub type PreparedEmbeddingRoute = (RoutedEmbeddingBackend, EmbeddingRequest);
+pub type PreparedRerankRoute = (RoutedRerankBackend, RerankRequest);
 
 pub fn dispatch_with_fallback(
   client: &dyn BackendHttpClient,
@@ -81,6 +115,52 @@ where
   Err(last_error.unwrap_or(BackendError::NoBackendAvailable))
 }
 
+pub fn dispatch_prepared_stream_with_fallback<F>(
+  client: &dyn BackendHttpClient,
+  routes: &[PreparedChatRoute],
+  on_event: F,
+) -> Result<String, BackendError>
+where
+  F: FnMut(usize, StreamEvent) -> Result<bool, BackendError>,
+{
+  dispatch_prepared_stream_with_fallback_index(client, routes, on_event).map(|(_, provider_id)| provider_id)
+}
+
+pub fn dispatch_prepared_stream_with_fallback_index<F>(
+  client: &dyn BackendHttpClient,
+  routes: &[PreparedChatRoute],
+  mut on_event: F,
+) -> Result<(usize, String), BackendError>
+where
+  F: FnMut(usize, StreamEvent) -> Result<bool, BackendError>,
+{
+  let mut last_error: Option<BackendError> = None;
+
+  for (index, (route, request)) in routes.iter().enumerate() {
+    if route.config.no_streaming {
+      continue;
+    }
+
+    let mut routed_request = request.clone();
+    routed_request.model = route.model.clone();
+    let mut emitted = false;
+    match dispatch_stream_events_with(client, &route.config, route.protocol, &routed_request, |event| {
+      emitted |= on_event(index, event)?;
+      Ok(())
+    }) {
+      Ok(()) => return Ok((index, route.provider_id.clone())),
+      Err(error) => {
+        if emitted {
+          return Err(error);
+        }
+        last_error = Some(error);
+      }
+    }
+  }
+
+  Err(last_error.unwrap_or(BackendError::NoBackendAvailable))
+}
+
 pub fn collect_stream_with_fallback(
   client: &dyn BackendHttpClient,
   routes: &[RoutedBackend],
@@ -92,6 +172,86 @@ pub fn collect_stream_with_fallback(
     Ok(())
   })?;
   Ok((provider_id, events))
+}
+
+pub fn dispatch_prepared_chat_with_fallback(
+  client: &dyn BackendHttpClient,
+  routes: &[PreparedChatRoute],
+) -> Result<(String, CoreResponse), BackendError> {
+  let mut last_error: Option<BackendError> = None;
+
+  for (route, request) in routes {
+    let mut routed_request = request.clone();
+    routed_request.model = route.model.clone();
+    match dispatch_request(client, &route.config, route.protocol, &routed_request) {
+      Ok(response) => return Ok((route.provider_id.clone(), response)),
+      Err(error) => {
+        last_error = Some(error);
+      }
+    }
+  }
+
+  Err(last_error.unwrap_or(BackendError::NoBackendAvailable))
+}
+
+pub fn dispatch_structured_with_fallback(
+  client: &dyn BackendHttpClient,
+  routes: &[PreparedStructuredRoute],
+) -> Result<(String, StructuredResponse), BackendError> {
+  let mut last_error: Option<BackendError> = None;
+
+  for (route, request) in routes {
+    let mut routed_request = request.clone();
+    routed_request.model = route.model.clone();
+    match dispatch_structured_request(client, &route.config, route.protocol, &routed_request) {
+      Ok(response) => return Ok((route.provider_id.clone(), response)),
+      Err(error) => {
+        last_error = Some(error);
+      }
+    }
+  }
+
+  Err(last_error.unwrap_or(BackendError::NoBackendAvailable))
+}
+
+pub fn dispatch_embedding_with_fallback(
+  client: &dyn BackendHttpClient,
+  routes: &[PreparedEmbeddingRoute],
+) -> Result<(String, EmbeddingResponse), BackendError> {
+  let mut last_error: Option<BackendError> = None;
+
+  for (route, request) in routes {
+    let mut routed_request = request.clone();
+    routed_request.model = route.model.clone();
+    match dispatch_embedding_request(client, &route.config, route.protocol, &routed_request) {
+      Ok(response) => return Ok((route.provider_id.clone(), response)),
+      Err(error) => {
+        last_error = Some(error);
+      }
+    }
+  }
+
+  Err(last_error.unwrap_or(BackendError::NoBackendAvailable))
+}
+
+pub fn dispatch_rerank_with_fallback(
+  client: &dyn BackendHttpClient,
+  routes: &[PreparedRerankRoute],
+) -> Result<(String, RerankResponse), BackendError> {
+  let mut last_error: Option<BackendError> = None;
+
+  for (route, request) in routes {
+    let mut routed_request = request.clone();
+    routed_request.model = route.model.clone();
+    match dispatch_rerank_request(client, &route.config, route.protocol, &routed_request) {
+      Ok(response) => return Ok((route.provider_id.clone(), response)),
+      Err(error) => {
+        last_error = Some(error);
+      }
+    }
+  }
+
+  Err(last_error.unwrap_or(BackendError::NoBackendAvailable))
 }
 
 fn with_model(request: &CoreRequest, model: &str) -> CoreRequest {
@@ -201,6 +361,49 @@ mod tests {
         .iter()
         .any(|event| matches!(event, StreamEvent::TextDelta { text } if text == "hello"))
     );
+  }
+
+  #[test]
+  fn should_return_selected_prepared_stream_route_index() {
+    let client = MockHttpClient::new(
+      vec![],
+      vec![MockHttpResponse::Stream(Ok(HttpStreamResponse {
+        status: 200,
+        body: concat!(
+          "data: {\"id\":\"chat_1\",\"object\":\"chat.completion.chunk\",\"model\":\"gpt-4.1\",\"choices\":[{\"index\"\
+           :0,\"delta\":{\"content\":\"hello\"},\"finish_reason\":null}]}\n\n",
+          "data: [DONE]\n\n"
+        )
+        .to_string(),
+      }))],
+    );
+    let request = sample_request();
+    let routes = vec![
+      (
+        RoutedBackend {
+          provider_id: "no-stream".to_string(),
+          protocol: ChatProtocol::OpenaiChatCompletions,
+          model: "gpt-4.1".to_string(),
+          config: sample_backend_config(true),
+        },
+        request.clone(),
+      ),
+      (
+        RoutedBackend {
+          provider_id: "stream".to_string(),
+          protocol: ChatProtocol::OpenaiChatCompletions,
+          model: "gpt-4.1".to_string(),
+          config: sample_backend_config(false),
+        },
+        request,
+      ),
+    ];
+
+    let (index, provider_id) =
+      dispatch_prepared_stream_with_fallback_index(&client, &routes, |_index, _event| Ok(true)).unwrap();
+
+    assert_eq!(index, 1);
+    assert_eq!(provider_id, "stream");
   }
 
   #[test]

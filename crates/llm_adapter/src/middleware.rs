@@ -8,7 +8,10 @@ use std::{collections::VecDeque, fmt::Write};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
-use crate::core::{CoreContent, CoreRequest, CoreRole, StreamEvent};
+use crate::{
+  backend::{BackendError, BackendRequestLayer, ChatProtocol, StructuredProtocol},
+  core::{CoreContent, CoreRequest, CoreRole, StreamEvent},
+};
 
 pub type RequestMiddleware = fn(CoreRequest, &MiddlewareConfig) -> CoreRequest;
 pub type StreamMiddleware = fn(StreamEvent, &mut PipelineContext, &MiddlewareConfig) -> Option<StreamEvent>;
@@ -167,6 +170,99 @@ pub fn run_stream_middleware_chain(
   }
 
   output
+}
+
+pub fn resolve_request_middleware(name: &str) -> Result<RequestMiddleware, BackendError> {
+  match name {
+    "normalize_messages" => Ok(normalize_messages as RequestMiddleware),
+    "clamp_max_tokens" => Ok(clamp_max_tokens as RequestMiddleware),
+    "tool_schema_rewrite" => Ok(tool_schema_rewrite as RequestMiddleware),
+    "openai_request_compat" => Ok(openai_request_compat as RequestMiddleware),
+    _ => Err(BackendError::InvalidRequest {
+      field: "middleware.request",
+      message: format!("unsupported request middleware: {name}"),
+    }),
+  }
+}
+
+pub fn resolve_stream_middleware(name: &str) -> Result<StreamMiddleware, BackendError> {
+  match name {
+    "stream_event_normalize" => Ok(stream_event_normalize as StreamMiddleware),
+    "citation_indexing" => Ok(citation_indexing as StreamMiddleware),
+    _ => Err(BackendError::InvalidRequest {
+      field: "middleware.stream",
+      message: format!("unsupported stream middleware: {name}"),
+    }),
+  }
+}
+
+pub fn resolve_request_middleware_chain(
+  names: &[String],
+  default: Vec<RequestMiddleware>,
+) -> Result<Vec<RequestMiddleware>, BackendError> {
+  if names.is_empty() {
+    return Ok(default);
+  }
+  names.iter().map(|name| resolve_request_middleware(name)).collect()
+}
+
+pub fn resolve_stream_middleware_chain(names: &[String]) -> Result<Vec<StreamMiddleware>, BackendError> {
+  if names.is_empty() {
+    return Ok(resolve_default_stream_middleware_chain());
+  }
+  names.iter().map(|name| resolve_stream_middleware(name)).collect()
+}
+
+pub fn resolve_default_request_middleware_chain(
+  protocol: ChatProtocol,
+  request_layer: Option<BackendRequestLayer>,
+) -> Vec<RequestMiddleware> {
+  match request_layer {
+    Some(BackendRequestLayer::Anthropic)
+    | Some(BackendRequestLayer::GeminiApi)
+    | Some(BackendRequestLayer::GeminiVertex)
+    | Some(BackendRequestLayer::VertexAnthropic) => {
+      vec![normalize_messages, tool_schema_rewrite]
+    }
+    Some(BackendRequestLayer::ChatCompletions) | Some(BackendRequestLayer::ChatCompletionsNoV1) => {
+      vec![normalize_messages, openai_request_compat]
+    }
+    Some(BackendRequestLayer::CloudflareWorkersAi) | Some(BackendRequestLayer::Responses) => vec![normalize_messages],
+    Some(BackendRequestLayer::OpenaiImages) | Some(BackendRequestLayer::Fal) => Vec::new(),
+    None => match protocol {
+      ChatProtocol::AnthropicMessages | ChatProtocol::GeminiGenerateContent => {
+        vec![normalize_messages, tool_schema_rewrite]
+      }
+      ChatProtocol::OpenaiResponses => vec![normalize_messages],
+      ChatProtocol::OpenaiChatCompletions => {
+        vec![normalize_messages, openai_request_compat]
+      }
+    },
+  }
+}
+
+pub fn resolve_default_structured_request_middleware_chain(
+  protocol: StructuredProtocol,
+  request_layer: Option<BackendRequestLayer>,
+) -> Vec<RequestMiddleware> {
+  match request_layer {
+    Some(BackendRequestLayer::GeminiApi) | Some(BackendRequestLayer::GeminiVertex) => {
+      vec![normalize_messages, tool_schema_rewrite]
+    }
+    Some(BackendRequestLayer::ChatCompletions) | Some(BackendRequestLayer::ChatCompletionsNoV1) => {
+      vec![normalize_messages, openai_request_compat]
+    }
+    Some(BackendRequestLayer::CloudflareWorkersAi) | Some(BackendRequestLayer::Responses) => vec![normalize_messages],
+    _ => match protocol {
+      StructuredProtocol::GeminiGenerateContent => vec![normalize_messages, tool_schema_rewrite],
+      StructuredProtocol::OpenaiResponses => vec![normalize_messages],
+      StructuredProtocol::OpenaiChatCompletions => vec![normalize_messages, openai_request_compat],
+    },
+  }
+}
+
+pub fn resolve_default_stream_middleware_chain() -> Vec<StreamMiddleware> {
+  vec![stream_event_normalize, citation_indexing]
 }
 
 #[must_use]
@@ -687,6 +783,45 @@ mod tests {
     request.include = None;
     request.reasoning = None;
     request
+  }
+
+  #[test]
+  fn resolves_default_request_middleware_by_protocol_and_layer() {
+    assert_eq!(
+      resolve_default_request_middleware_chain(ChatProtocol::OpenaiChatCompletions, None).len(),
+      2
+    );
+    assert_eq!(
+      resolve_default_request_middleware_chain(
+        ChatProtocol::GeminiGenerateContent,
+        Some(BackendRequestLayer::GeminiApi)
+      )
+      .len(),
+      2
+    );
+    assert!(
+      resolve_default_request_middleware_chain(ChatProtocol::OpenaiChatCompletions, Some(BackendRequestLayer::Fal))
+        .is_empty()
+    );
+  }
+
+  #[test]
+  fn resolves_explicit_middleware_chain_or_error() {
+    let chain = resolve_request_middleware_chain(
+      &["normalize_messages".to_string(), "clamp_max_tokens".to_string()],
+      Vec::new(),
+    )
+    .unwrap();
+    assert_eq!(chain.len(), 2);
+
+    let error = resolve_stream_middleware_chain(&["unknown".to_string()]).unwrap_err();
+    assert!(matches!(
+      error,
+      BackendError::InvalidRequest {
+        field: "middleware.stream",
+        ..
+      }
+    ));
   }
 
   #[test]

@@ -1,4 +1,4 @@
-use std::{collections::BTreeMap, ops::Index};
+use std::{collections::BTreeMap, ops::Index, str::FromStr};
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -57,6 +57,160 @@ pub enum BackendRequestLayer {
   VertexAnthropic,
   OpenaiImages,
   Fal,
+}
+
+fn normalize_protocol_name(value: &str) -> String {
+  value.trim().replace('-', "_").to_ascii_lowercase()
+}
+
+impl FromStr for ChatProtocol {
+  type Err = BackendError;
+
+  fn from_str(value: &str) -> Result<Self, Self::Err> {
+    match normalize_protocol_name(value).as_str() {
+      "openai_chat" | "openai_chat_completions" | "chat_completions" => Ok(Self::OpenaiChatCompletions),
+      "openai_responses" | "responses" => Ok(Self::OpenaiResponses),
+      "anthropic" | "anthropic_messages" => Ok(Self::AnthropicMessages),
+      "gemini" | "gemini_generate_content" => Ok(Self::GeminiGenerateContent),
+      _ => Err(BackendError::InvalidRequest {
+        field: "protocol",
+        message: format!("unsupported chat protocol: {value}"),
+      }),
+    }
+  }
+}
+
+impl TryFrom<&str> for ChatProtocol {
+  type Error = BackendError;
+
+  fn try_from(value: &str) -> Result<Self, Self::Error> {
+    value.parse()
+  }
+}
+
+impl FromStr for StructuredProtocol {
+  type Err = BackendError;
+
+  fn from_str(value: &str) -> Result<Self, Self::Err> {
+    match normalize_protocol_name(value).as_str() {
+      "openai_chat" | "openai_chat_completions" | "chat_completions" => Ok(Self::OpenaiChatCompletions),
+      "openai_responses" | "responses" => Ok(Self::OpenaiResponses),
+      "gemini" | "gemini_generate_content" => Ok(Self::GeminiGenerateContent),
+      _ => Err(BackendError::InvalidRequest {
+        field: "protocol",
+        message: format!("unsupported structured protocol: {value}"),
+      }),
+    }
+  }
+}
+
+impl TryFrom<&str> for StructuredProtocol {
+  type Error = BackendError;
+
+  fn try_from(value: &str) -> Result<Self, Self::Error> {
+    value.parse()
+  }
+}
+
+impl FromStr for EmbeddingProtocol {
+  type Err = BackendError;
+
+  fn from_str(value: &str) -> Result<Self, Self::Err> {
+    match normalize_protocol_name(value).as_str() {
+      "openai" | "openai_chat" | "openai_chat_completions" | "chat_completions" => Ok(Self::Openai),
+      "gemini" | "gemini_generate_content" => Ok(Self::Gemini),
+      _ => Err(BackendError::InvalidRequest {
+        field: "protocol",
+        message: format!("unsupported embedding protocol: {value}"),
+      }),
+    }
+  }
+}
+
+impl TryFrom<&str> for EmbeddingProtocol {
+  type Error = BackendError;
+
+  fn try_from(value: &str) -> Result<Self, Self::Error> {
+    value.parse()
+  }
+}
+
+impl FromStr for RerankProtocol {
+  type Err = BackendError;
+
+  fn from_str(value: &str) -> Result<Self, Self::Err> {
+    match normalize_protocol_name(value).as_str() {
+      "openai_chat" | "openai_chat_completions" | "chat_completions" => Ok(Self::OpenaiChatLogprobs),
+      "cloudflare_workers_ai" => Ok(Self::CloudflareWorkersAi),
+      _ => Err(BackendError::InvalidRequest {
+        field: "protocol",
+        message: format!("unsupported rerank protocol: {value}"),
+      }),
+    }
+  }
+}
+
+impl TryFrom<&str> for RerankProtocol {
+  type Error = BackendError;
+
+  fn try_from(value: &str) -> Result<Self, Self::Error> {
+    value.parse()
+  }
+}
+
+impl FromStr for ImageProtocol {
+  type Err = BackendError;
+
+  fn from_str(value: &str) -> Result<Self, Self::Err> {
+    match normalize_protocol_name(value).as_str() {
+      "openai_images" => Ok(Self::OpenaiImages),
+      "gemini" | "gemini_generate_content" => Ok(Self::GeminiGenerateContent),
+      "fal" | "fal_image" => Ok(Self::FalImage),
+      _ => Err(BackendError::InvalidRequest {
+        field: "protocol",
+        message: format!("unsupported image protocol: {value}"),
+      }),
+    }
+  }
+}
+
+impl TryFrom<&str> for ImageProtocol {
+  type Error = BackendError;
+
+  fn try_from(value: &str) -> Result<Self, Self::Error> {
+    value.parse()
+  }
+}
+
+impl FromStr for BackendRequestLayer {
+  type Err = BackendError;
+
+  fn from_str(value: &str) -> Result<Self, Self::Err> {
+    match normalize_protocol_name(value).as_str() {
+      "anthropic" => Ok(Self::Anthropic),
+      "chat_completions" => Ok(Self::ChatCompletions),
+      "chat_completions_no_v1" => Ok(Self::ChatCompletionsNoV1),
+      "cloudflare_workers_ai" => Ok(Self::CloudflareWorkersAi),
+      "gemini_api" => Ok(Self::GeminiApi),
+      "gemini_vertex" => Ok(Self::GeminiVertex),
+      "responses" => Ok(Self::Responses),
+      "vertex_anthropic" => Ok(Self::VertexAnthropic),
+      "openai_images" => Ok(Self::OpenaiImages),
+      "fal" => Ok(Self::Fal),
+      _ => Err(BackendError::InvalidRequest {
+        field: "request_layer",
+        message: format!("unsupported request layer: {value}"),
+      }),
+    }
+  }
+}
+
+impl TryFrom<&str> for BackendRequestLayer {
+  type Error = BackendError;
+
+  fn try_from(value: &str) -> Result<Self, Self::Error> {
+    value.parse()
+  }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

@@ -1,5 +1,5 @@
 use llm_adapter::core::CoreUsage;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -30,7 +30,7 @@ pub struct ToolExecutionResult {
   pub is_error: Option<bool>,
 }
 
-#[derive(Debug, Clone, Serialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ToolLoopEvent {
   MessageStart {
