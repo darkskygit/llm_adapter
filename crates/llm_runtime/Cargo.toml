@@ -7,15 +7,17 @@ license.workspace    = true
 name                 = "llm_runtime"
 readme               = "../../README.md"
 repository.workspace = true
-version              = "0.2.1"
+version              = "0.2.2"
 
 [features]
 default        = ["reqwest-client"]
 reqwest-client = ["llm_adapter/reqwest-client"]
+schema         = ["dep:schemars", "llm_adapter/schema"]
 ureq-client    = ["llm_adapter/ureq-client"]
 
 [dependencies]
 llm_adapter = { version = "0.2", default-features = false }
+schemars    = { workspace = true, optional = true }
 serde       = { workspace = true }
 serde_json  = { workspace = true }
 thiserror   = { workspace = true }

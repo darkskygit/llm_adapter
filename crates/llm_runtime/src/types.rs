@@ -1,4 +1,6 @@
 use llm_adapter::core::CoreUsage;
+#[cfg(feature = "schema")]
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -30,6 +32,7 @@ pub struct ToolExecutionResult {
   pub is_error: Option<bool>,
 }
 
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ToolLoopEvent {

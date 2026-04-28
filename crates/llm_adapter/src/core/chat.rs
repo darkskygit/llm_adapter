@@ -1,8 +1,11 @@
+#[cfg(feature = "schema")]
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::protocol::ProtocolError;
 
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CoreRole {
@@ -12,6 +15,7 @@ pub enum CoreRole {
   Tool,
 }
 
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum CoreContent {
@@ -83,6 +87,7 @@ impl CoreContent {
   }
 }
 
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CoreToolDefinition {
   pub name: String,
@@ -91,6 +96,7 @@ pub struct CoreToolDefinition {
   pub parameters: Value,
 }
 
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CoreToolChoiceMode {
@@ -99,6 +105,7 @@ pub enum CoreToolChoiceMode {
   Required,
 }
 
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum CoreToolChoice {
@@ -106,12 +113,14 @@ pub enum CoreToolChoice {
   Specific { name: String },
 }
 
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CoreMessage {
   pub role: CoreRole,
   pub content: Vec<CoreContent>,
 }
 
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CoreRequest {
   pub model: String,
@@ -142,6 +151,7 @@ impl CoreRequest {
   }
 }
 
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct CoreUsage {
   pub prompt_tokens: u32,
@@ -151,6 +161,7 @@ pub struct CoreUsage {
   pub cached_tokens: Option<u32>,
 }
 
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CoreResponse {
   pub id: String,
