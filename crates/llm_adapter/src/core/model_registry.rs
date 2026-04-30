@@ -1,7 +1,13 @@
 use std::collections::BTreeMap;
 
+#[cfg(feature = "schema")]
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+#[path = "model_catalog/mod.rs"]
+mod catalog;
+
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct ModelConditions {
@@ -19,6 +25,7 @@ pub struct ModelConditions {
   pub output_type: Option<String>,
 }
 
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct CapabilityAttachment {
@@ -29,6 +36,7 @@ pub struct CapabilityAttachment {
   pub allow_remote_urls: Option<bool>,
 }
 
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct ModelCapability {
@@ -42,12 +50,14 @@ pub struct ModelCapability {
   pub default_for_output_type: Option<bool>,
 }
 
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 pub struct CandidateModel {
   pub id: String,
   pub capabilities: Vec<ModelCapability>,
 }
 
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct ModelRegistryVariant {
@@ -70,6 +80,7 @@ pub struct ModelRegistryVariant {
   pub behavior_flags: Option<Vec<String>>,
 }
 
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct ModelRegistryRoute {
@@ -541,6 +552,11 @@ pub fn select_model_registry_variant<'a>(
   )
 }
 
+#[must_use]
+pub fn default_model_registry_variants() -> Vec<ModelRegistryVariant> {
+  catalog::registry_variants()
+}
+
 #[cfg(test)]
 mod tests {
   use super::*;
@@ -646,5 +662,38 @@ mod tests {
       "legacy_alias"
     );
     assert!(resolve_model_registry_variant(&variants, None, "same").is_err());
+  }
+
+  #[test]
+  fn default_catalog_resolves_backend_scoped_aliases() {
+    let variants = default_model_registry_variants();
+    let (variant, matched_by) =
+      resolve_model_registry_variant(&variants, Some("anthropic_vertex"), "claude-sonnet-4.5")
+        .unwrap()
+        .unwrap();
+
+    assert_eq!(matched_by, "canonical");
+    assert_eq!(variant.raw_model_id, "claude-sonnet-4-5@20250929");
+  }
+
+  #[test]
+  fn default_catalog_selects_backend_default_by_output() {
+    let variants = default_model_registry_variants();
+    let variant = select_model_registry_variant(
+      &variants,
+      "gemini_api",
+      &ModelConditions {
+        input_types: Some(vec!["text".to_string()]),
+        attachment_kinds: None,
+        attachment_source_kinds: None,
+        has_remote_attachments: None,
+        model_id: None,
+        output_type: Some("embedding".to_string()),
+      },
+    )
+    .unwrap()
+    .unwrap();
+
+    assert_eq!(variant.raw_model_id, "gemini-embedding-001");
   }
 }

@@ -222,22 +222,92 @@ fn core_message_to_gemini(
   }))
 }
 
-fn sanitize_function_parameters(parameters: &Value) -> Value {
-  match parameters {
+fn resolve_schema_ref<'a>(root: &'a Value, ref_path: &str) -> Option<&'a Value> {
+  let path = ref_path.strip_prefix("#/")?;
+  let mut current = root;
+  for segment in path.split('/') {
+    current = current.get(segment)?;
+  }
+  Some(current)
+}
+
+fn sanitize_gemini_schema_inner(schema: &Value, root: &Value) -> Value {
+  match schema {
     Value::Object(object) => {
+      if let Some(ref_path) = object.get("$ref").and_then(Value::as_str)
+        && let Some(resolved) = resolve_schema_ref(root, ref_path)
+      {
+        return sanitize_gemini_schema_inner(resolved, root);
+      }
+
       let mut sanitized = Map::new();
       for (key, value) in object {
-        if key == "additionalProperties" {
+        if matches!(
+          key.as_str(),
+          "$schema" | "$defs" | "$ref" | "additionalProperties" | "definitions"
+        ) {
           continue;
         }
 
-        sanitized.insert(key.clone(), sanitize_function_parameters(value));
+        if key == "anyOf" || key == "oneOf" {
+          if let Some(items) = value.as_array() {
+            let nullable = items.iter().any(Value::is_null)
+              || items.iter().any(|item| {
+                item
+                  .as_object()
+                  .is_some_and(|object| object.get("type").and_then(Value::as_str) == Some("null"))
+              });
+            if let Some(item) = items.iter().find(|item| {
+              !item.is_null()
+                && item
+                  .as_object()
+                  .is_none_or(|object| object.get("type").and_then(Value::as_str) != Some("null"))
+            }) {
+              let mut next = sanitize_gemini_schema_inner(item, root);
+              if nullable && let Value::Object(object) = &mut next {
+                object.insert("nullable".to_string(), Value::Bool(true));
+              }
+              return next;
+            }
+          }
+          continue;
+        }
+
+        if key == "type"
+          && let Some(types) = value.as_array()
+        {
+          let nullable = types.iter().any(|item| item.as_str() == Some("null"));
+          if let Some(non_null) = types.iter().find(|item| item.as_str() != Some("null")) {
+            sanitized.insert(key.clone(), non_null.clone());
+            if nullable {
+              sanitized.insert("nullable".to_string(), Value::Bool(true));
+            }
+          }
+          continue;
+        }
+
+        sanitized.insert(key.clone(), sanitize_gemini_schema_inner(value, root));
       }
       Value::Object(sanitized)
     }
-    Value::Array(items) => Value::Array(items.iter().map(sanitize_function_parameters).collect::<Vec<_>>()),
-    _ => parameters.clone(),
+    Value::Array(items) => Value::Array(
+      items
+        .iter()
+        .map(|item| sanitize_gemini_schema_inner(item, root))
+        .collect::<Vec<_>>(),
+    ),
+    Value::Bool(true) => Value::Object(Map::new()),
+    Value::Bool(false) => json!({ "not": {} }),
+    _ => schema.clone(),
   }
+}
+
+fn sanitize_gemini_schema(schema: &Value) -> Value {
+  sanitize_gemini_schema_inner(schema, schema)
+}
+
+fn sanitize_function_parameters(parameters: &Value) -> Value {
+  sanitize_gemini_schema(parameters)
 }
 
 fn core_tool_choice_to_gemini(choice: Option<&CoreToolChoice>) -> Option<Value> {
@@ -422,10 +492,7 @@ pub fn encode(request: &CoreRequest, stream: bool, request_layer: BackendRequest
       "responseMimeType".to_string(),
       Value::String("application/json".to_string()),
     );
-    generation_config.insert(
-      "responseSchema".to_string(),
-      sanitize_function_parameters(response_schema),
-    );
+    generation_config.insert("responseSchema".to_string(), sanitize_gemini_schema(response_schema));
   }
   if !generation_config.is_empty() {
     payload.insert("generationConfig".to_string(), Value::Object(generation_config));
@@ -795,6 +862,78 @@ mod tests {
       payload["generationConfig"]["responseSchema"]
         .get("additionalProperties")
         .is_none()
+    );
+  }
+
+  #[test]
+  fn encode_should_sanitize_draft7_response_schema_for_gemini() {
+    let payload = encode(
+      &CoreRequest {
+        model: "gemini-2.5-flash".to_string(),
+        messages: vec![CoreMessage {
+          role: CoreRole::User,
+          content: vec![CoreContent::Text {
+            text: "Summarize meeting.".to_string(),
+          }],
+        }],
+        stream: false,
+        max_tokens: Some(64),
+        temperature: None,
+        tools: vec![],
+        tool_choice: None,
+        include: None,
+        reasoning: None,
+        response_schema: Some(json!({
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "definitions": {
+            "Segment": {
+              "type": "object",
+              "properties": {
+                "text": { "type": "string" }
+              }
+            }
+          },
+          "type": "object",
+          "properties": {
+            "segments": {
+              "type": ["array", "null"],
+              "items": { "$ref": "#/definitions/Segment" }
+            },
+            "summary": {
+              "anyOf": [{ "type": "null" }, { "type": "string" }]
+            },
+            "providerMeta": true
+          },
+          "additionalProperties": false
+        })),
+      },
+      false,
+      BackendRequestLayer::GeminiApi,
+      "https://generativelanguage.googleapis.com/v1beta",
+    );
+
+    assert_eq!(
+      payload["generationConfig"]["responseSchema"],
+      json!({
+        "type": "object",
+        "properties": {
+          "segments": {
+            "type": "array",
+            "nullable": true,
+            "items": {
+              "type": "object",
+              "properties": {
+                "text": { "type": "string" }
+              }
+            }
+          },
+          "summary": {
+            "type": "string",
+            "nullable": true
+          },
+          "providerMeta": {}
+        }
+      })
     );
   }
 

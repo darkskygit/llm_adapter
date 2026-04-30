@@ -1,13 +1,17 @@
+#[cfg(feature = "schema")]
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::protocol::ProtocolError;
 
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct EmbeddingUsage {
   pub prompt_tokens: u32,
   pub total_tokens: u32,
 }
 
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct EmbeddingRequest {
   pub model: String,
@@ -38,6 +42,7 @@ impl EmbeddingRequest {
   }
 }
 
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct EmbeddingResponse {
   pub model: String,

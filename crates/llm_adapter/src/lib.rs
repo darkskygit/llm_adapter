@@ -6,6 +6,8 @@ pub mod middleware;
 pub mod protocol;
 /// Public fallback router helpers for external multi-provider orchestration.
 pub mod router;
+#[cfg(feature = "schema")]
+pub mod schema;
 pub mod stream;
 pub(crate) mod utils;
 

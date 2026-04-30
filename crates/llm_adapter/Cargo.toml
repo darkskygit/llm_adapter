@@ -7,13 +7,13 @@ license.workspace     = true
 name                  = "llm_adapter"
 readme                = "../../README.md"
 repository.workspace  = true
-version               = "0.2.2"
+version               = "0.2.3"
 
 [features]
 benchmark-cli  = ["dep:anyhow", "dep:clap", "dep:rand", "dep:toml"]
 default        = ["reqwest-client"]
 reqwest-client = ["dep:reqwest"]
-schema         = ["dep:schemars"]
+schema         = ["dep:jsonschema", "dep:schemars"]
 ureq-client    = ["dep:ureq"]
 
 [dependencies]
@@ -29,6 +29,7 @@ thiserror  = { workspace = true }
 toml       = { workspace = true, optional = true }
 ureq       = { workspace = true, optional = true }
 url        = { workspace = true }
+jsonschema = { workspace = true, optional = true }
 
 [[bin]]
 name              = "llm_benchmark"

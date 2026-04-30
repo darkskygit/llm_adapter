@@ -1,3 +1,5 @@
+#[cfg(feature = "schema")]
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -16,6 +18,7 @@ const MAX_IMAGE_MEDIA_TYPE_CHARS: usize = 127;
 const MAX_IMAGE_OUTPUT_COUNT: u32 = 10;
 const MAX_IMAGE_MODEL_CHARS: usize = 256;
 
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ImageFormat {
@@ -44,6 +47,7 @@ impl ImageFormat {
   }
 }
 
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ImageInput {
@@ -211,6 +215,7 @@ fn validate_image_model(model: &str) -> Result<(), ProtocolError> {
   Ok(())
 }
 
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct ImageOptions {
   #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -231,6 +236,7 @@ pub struct ImageOptions {
   pub seed: Option<u64>,
 }
 
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 #[serde(tag = "provider", content = "options", rename_all = "snake_case")]
 pub enum ImageProviderOptions {
@@ -242,6 +248,7 @@ pub enum ImageProviderOptions {
   Extra(Value),
 }
 
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "operation", rename_all = "snake_case")]
 pub enum ImageRequest {
@@ -249,6 +256,7 @@ pub enum ImageRequest {
   Edit(ImageEditRequest),
 }
 
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ImageGenerateRequest {
   pub model: String,
@@ -259,6 +267,7 @@ pub struct ImageGenerateRequest {
   pub provider_options: ImageProviderOptions,
 }
 
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ImageEditRequest {
   pub model: String,
@@ -457,6 +466,7 @@ impl ImageRequest {
   }
 }
 
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub struct ImageUsage {
   #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -467,6 +477,7 @@ pub struct ImageUsage {
   pub total_tokens: Option<u32>,
 }
 
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ImageArtifact {
   #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -482,6 +493,7 @@ pub struct ImageArtifact {
   pub provider_metadata: Value,
 }
 
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ImageResponse {
   pub images: Vec<ImageArtifact>,

@@ -1,7 +1,10 @@
+#[cfg(feature = "schema")]
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::protocol::ProtocolError;
 
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RerankCandidate {
   #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -9,6 +12,7 @@ pub struct RerankCandidate {
   pub text: String,
 }
 
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RerankRequest {
   pub model: String,
@@ -53,6 +57,7 @@ impl RerankRequest {
   }
 }
 
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RerankResponse {
   pub model: String,

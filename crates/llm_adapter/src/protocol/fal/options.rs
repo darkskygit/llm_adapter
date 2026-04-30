@@ -1,3 +1,5 @@
+#[cfg(feature = "schema")]
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -7,6 +9,7 @@ const MAX_FAL_IMAGE_DIMENSION: u32 = 8192;
 const MAX_FAL_ASPECT_RATIO_CHARS: usize = 32;
 const MAX_FAL_IMAGE_OUTPUT_COUNT: u32 = 10;
 
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum FalImageSizePreset {
@@ -22,6 +25,7 @@ pub enum FalImageSizePreset {
   Landscape16_9,
 }
 
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum FalImageSize {
@@ -50,6 +54,7 @@ impl FalImageSize {
   }
 }
 
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum FalImageOutputFormat {
@@ -69,6 +74,7 @@ impl FalImageOutputFormat {
   }
 }
 
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub struct FalImageOptions {
   #[serde(default, skip_serializing_if = "Option::is_none")]

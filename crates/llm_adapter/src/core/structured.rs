@@ -1,9 +1,12 @@
+#[cfg(feature = "schema")]
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use super::chat::{CoreMessage, CoreRequest, CoreUsage, validate_messages};
 use crate::protocol::ProtocolError;
 
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct StructuredRequest {
   pub model: String,
@@ -45,6 +48,7 @@ impl StructuredRequest {
   }
 }
 
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct StructuredResponse {
   pub id: String,

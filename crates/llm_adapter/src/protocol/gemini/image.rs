@@ -1,4 +1,6 @@
 use base64::{Engine as _, engine::general_purpose::STANDARD};
+#[cfg(feature = "schema")]
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 
@@ -8,6 +10,7 @@ use crate::{
   protocol::{ProtocolError, gemini, get_u32, infer_media_type_from_url},
 };
 
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub struct GeminiImageOptions {
   #[serde(default, skip_serializing_if = "Option::is_none")]
