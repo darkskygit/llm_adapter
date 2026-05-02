@@ -1,7 +1,7 @@
-use llm_adapter::core::StreamEvent;
+use llm_adapter::{core::StreamEvent, middleware::StreamPipeline};
 use thiserror::Error;
 
-use crate::{AccumulatedToolCall, ToolCallAccumulator, ToolLoopEvent};
+use crate::{AccumulatedToolCall, ToolLoopEvent, tool_call::ToolCallAccumulator};
 
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum RoundProcessorError {
@@ -16,19 +16,20 @@ pub struct RoundOutcome {
 }
 
 #[derive(Debug, Default)]
-pub struct RoundProcessor {
+struct RoundProcessor {
   accumulator: ToolCallAccumulator,
   tool_calls: Vec<AccumulatedToolCall>,
   final_done: Option<ToolLoopEvent>,
 }
 
 #[derive(Debug, Default)]
-pub struct StreamRoundRunner {
+struct StreamRoundRunner {
   processor: RoundProcessor,
 }
 
 impl StreamRoundRunner {
-  pub fn process_event<E, Emit>(&mut self, event: StreamEvent, emit: Emit) -> Result<(), E>
+  #[cfg(test)]
+  fn process_event<E, Emit>(&mut self, event: StreamEvent, emit: Emit) -> Result<(), E>
   where
     E: From<RoundProcessorError>,
     Emit: FnMut(ToolLoopEvent) -> Result<(), E>,
@@ -36,7 +37,7 @@ impl StreamRoundRunner {
     self.process_event_with(event, E::from, emit)
   }
 
-  pub fn process_event_with<E, MapError, Emit>(
+  fn process_event_with<E, MapError, Emit>(
     &mut self,
     event: StreamEvent,
     map_error: MapError,
@@ -53,13 +54,13 @@ impl StreamRoundRunner {
     Ok(())
   }
 
-  pub fn finish(self) -> RoundOutcome {
+  fn finish(self) -> RoundOutcome {
     self.processor.finish()
   }
 }
 
 impl RoundProcessor {
-  pub fn process(&mut self, event: StreamEvent) -> Result<Vec<ToolLoopEvent>, RoundProcessorError> {
+  fn process(&mut self, event: StreamEvent) -> Result<Vec<ToolLoopEvent>, RoundProcessorError> {
     match event {
       StreamEvent::ToolCallDelta {
         call_id,
@@ -94,7 +95,7 @@ impl RoundProcessor {
     }
   }
 
-  pub fn finish(mut self) -> RoundOutcome {
+  fn finish(mut self) -> RoundOutcome {
     self.tool_calls.extend(self.accumulator.drain_pending());
     RoundOutcome {
       tool_calls: self.tool_calls,
@@ -103,7 +104,8 @@ impl RoundProcessor {
   }
 }
 
-pub fn run_stream_round<E, Events, Emit>(events: Events, mut emit: Emit) -> Result<RoundOutcome, E>
+#[cfg(test)]
+fn run_stream_round<E, Events, Emit>(events: Events, mut emit: Emit) -> Result<RoundOutcome, E>
 where
   Events: IntoIterator<Item = Result<StreamEvent, E>>,
   Emit: FnMut(ToolLoopEvent) -> Result<(), E>,
@@ -120,12 +122,72 @@ where
   Ok(processor.finish())
 }
 
+pub fn run_prepared_stream_round_with_fallback<E, Dispatch, Abort, AbortError, MapRoundError, Emit>(
+  pipelines: &mut [StreamPipeline],
+  mut dispatch_round: Dispatch,
+  mut should_abort: Abort,
+  mut abort_error: AbortError,
+  mut map_round_error: MapRoundError,
+  mut emit: Emit,
+) -> Result<RoundOutcome, E>
+where
+  Dispatch: FnMut(&mut dyn FnMut(usize, StreamEvent) -> Result<bool, E>) -> Result<usize, E>,
+  Abort: FnMut() -> bool,
+  AbortError: FnMut() -> E,
+  MapRoundError: FnMut(RoundProcessorError) -> E,
+  Emit: FnMut(&ToolLoopEvent) -> Result<(), E>,
+{
+  let mut runners = pipelines
+    .iter()
+    .map(|_| StreamRoundRunner::default())
+    .collect::<Vec<_>>();
+
+  let selected_index = dispatch_round(&mut |index, event| {
+    if should_abort() {
+      return Err(abort_error());
+    }
+
+    let mut round_emitted = false;
+    for event in pipelines[index].process(event) {
+      runners[index].process_event_with(
+        event,
+        |error| map_round_error(error),
+        |loop_event| {
+          round_emitted = true;
+          emit(&loop_event)
+        },
+      )?;
+    }
+
+    Ok(round_emitted)
+  })?;
+
+  if !should_abort() {
+    for event in pipelines[selected_index].finish() {
+      if should_abort() {
+        break;
+      }
+
+      runners[selected_index].process_event_with(
+        event,
+        |error| map_round_error(error),
+        |loop_event| emit(&loop_event),
+      )?;
+    }
+  }
+
+  Ok(runners.swap_remove(selected_index).finish())
+}
+
 #[cfg(test)]
 mod tests {
-  use llm_adapter::core::StreamEvent;
+  use llm_adapter::{
+    core::StreamEvent,
+    middleware::{MiddlewareConfig, StreamPipeline, resolve_stream_middleware_chain},
+  };
   use serde_json::json;
 
-  use super::{RoundProcessor, RoundProcessorError, run_stream_round};
+  use super::{RoundProcessor, RoundProcessorError, run_prepared_stream_round_with_fallback, run_stream_round};
   use crate::ToolLoopEvent;
 
   #[test]
@@ -254,6 +316,57 @@ mod tests {
         ..
       }) if reason == "stop"
     ));
+  }
+
+  #[test]
+  fn should_run_prepared_stream_round_with_fallback_pipeline() {
+    let mut pipelines = vec![StreamPipeline::new(
+      resolve_stream_middleware_chain(&["stream_event_normalize".to_string()]).unwrap(),
+      MiddlewareConfig::default(),
+    )];
+    let mut emitted = Vec::new();
+
+    let outcome = run_prepared_stream_round_with_fallback(
+      &mut pipelines,
+      |on_event| {
+        on_event(
+          0,
+          StreamEvent::MessageStart {
+            id: Some("chat_1".to_string()),
+            model: Some("gpt-4.1".to_string()),
+          },
+        )?;
+        on_event(
+          0,
+          StreamEvent::TextDelta {
+            text: "hello".to_string(),
+          },
+        )?;
+        Ok::<_, String>(0)
+      },
+      || false,
+      || "aborted".to_string(),
+      |error| error.to_string(),
+      |event| {
+        emitted.push(event.clone());
+        Ok(())
+      },
+    )
+    .unwrap();
+
+    assert!(outcome.tool_calls.is_empty());
+    assert_eq!(
+      emitted,
+      vec![
+        ToolLoopEvent::MessageStart {
+          id: Some("chat_1".to_string()),
+          model: Some("gpt-4.1".to_string()),
+        },
+        ToolLoopEvent::TextDelta {
+          text: "hello".to_string(),
+        },
+      ]
+    );
   }
 
   #[test]

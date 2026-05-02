@@ -8,8 +8,8 @@ use super::{
     },
     protocol::{ProtocolError, anthropic, fal, gemini, openai},
     stream::{
-      AnthropicStreamParser, GeminiStreamParser, IncrementalSseEncoder, OpenaiChatStreamParser,
-      OpenaiResponsesStreamParser, SseFrame, SseFrameDecoder, StreamEncodingTarget, StreamParseError, encode_sse_frame,
+      AnthropicStreamParser, GeminiStreamParser, OpenaiChatStreamParser, OpenaiResponsesStreamParser, SseFrame,
+      SseFrameDecoder, StreamParseError,
     },
   },
   BackendConfig, BackendError, BackendHttpClient, BackendRequestLayer, ChatProtocol, EmbeddingProtocol, HttpBody,
@@ -19,6 +19,8 @@ use super::{
     resolve_rerank_request_layer, resolve_structured_request_layer,
   },
 };
+#[cfg(test)]
+use crate::stream::{IncrementalSseEncoder, StreamEncodingTarget, encode_sse_frame};
 
 impl ChatProtocol {
   fn encode_request(
@@ -277,7 +279,7 @@ fn build_rerank_http_request(
   })
 }
 
-pub fn build_image_http_request(
+fn build_image_http_request(
   config: &BackendConfig,
   protocol: &ImageProtocol,
   request: &ImageRequest,
@@ -386,30 +388,6 @@ pub fn dispatch_image_request(
   protocol.decode_image_response(&response.body, request)
 }
 
-pub fn dispatch_prepared_image_with_fallback(
-  client: &dyn BackendHttpClient,
-  routes: &[(crate::router::RoutedImageBackend, ImageRequest)],
-) -> Result<(String, ImageResponse), BackendError> {
-  let mut last_error = None;
-
-  for (route, request) in routes {
-    let mut routed_request = request.clone();
-    routed_request.set_model(route.model.clone());
-    match dispatch_image_request(client, &route.config, route.protocol, &routed_request) {
-      Ok(response) if !response.images.is_empty() => return Ok((route.provider_id.clone(), response)),
-      Ok(_) => {
-        last_error = Some(BackendError::InvalidResponse {
-          field: "images",
-          message: "expected at least one image".to_string(),
-        })
-      }
-      Err(error) => last_error = Some(error),
-    }
-  }
-
-  Err(last_error.unwrap_or(BackendError::NoBackendAvailable))
-}
-
 pub fn collect_stream_events(
   client: &dyn BackendHttpClient,
   config: &BackendConfig,
@@ -459,22 +437,8 @@ where
   Ok(())
 }
 
-pub fn collect_stream_encoded(
-  client: &dyn BackendHttpClient,
-  config: &BackendConfig,
-  source_protocol: ChatProtocol,
-  target: StreamEncodingTarget,
-  request: &CoreRequest,
-) -> Result<String, BackendError> {
-  let mut out = String::new();
-  dispatch_stream_encoded_with(client, config, source_protocol, target, request, |chunk| {
-    out.push_str(chunk);
-    Ok(())
-  })?;
-  Ok(out)
-}
-
-pub fn dispatch_stream_encoded_with<F>(
+#[cfg(test)]
+pub(super) fn dispatch_stream_encoded_with<F>(
   client: &dyn BackendHttpClient,
   config: &BackendConfig,
   source_protocol: ChatProtocol,

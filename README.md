@@ -196,10 +196,10 @@ Provider-specific image options live under the protocol modules:
 
 This crate exposes reusable orchestration helpers:
 
-- `router::dispatch_with_fallback`
-- `router::dispatch_stream_with_fallback`
-- `middleware::run_request_middleware_chain`
-- `middleware::run_stream_middleware_chain`
+- `router::dispatch_prepared_chat_with_fallback`
+- `router::dispatch_prepared_stream_with_fallback`
+- `middleware::apply_request_middleware_names`
+- `middleware::StreamPipeline`
 
 They are designed for host apps that want custom retry, fallback, and policy pipelines.
 

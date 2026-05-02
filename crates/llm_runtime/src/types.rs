@@ -34,6 +34,37 @@ pub struct ToolExecutionResult {
 
 #[cfg_attr(feature = "schema", derive(JsonSchema))]
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
+pub struct ToolCallbackRequest {
+  pub call_id: String,
+  pub name: String,
+  pub args: Value,
+  #[serde(skip_serializing_if = "Option::is_none")]
+  pub raw_arguments_text: Option<String>,
+  #[serde(skip_serializing_if = "Option::is_none")]
+  pub argument_parse_error: Option<String>,
+}
+
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
+pub struct ToolCallbackResponse {
+  pub call_id: String,
+  pub name: String,
+  pub args: Value,
+  #[serde(skip_serializing_if = "Option::is_none")]
+  pub raw_arguments_text: Option<String>,
+  #[serde(skip_serializing_if = "Option::is_none")]
+  pub argument_parse_error: Option<String>,
+  pub output: Value,
+  #[serde(skip_serializing_if = "Option::is_none")]
+  pub is_error: Option<bool>,
+}
+
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ToolLoopEvent {
   MessageStart {

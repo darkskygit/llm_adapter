@@ -11,12 +11,12 @@ struct ToolCallState {
 }
 
 #[derive(Debug, Default)]
-pub struct ToolCallAccumulator {
+pub(crate) struct ToolCallAccumulator {
   states: BTreeMap<String, ToolCallState>,
 }
 
 impl ToolCallAccumulator {
-  pub fn feed_delta(&mut self, call_id: String, name: Option<String>, arguments_delta: String) {
+  pub(crate) fn feed_delta(&mut self, call_id: String, name: Option<String>, arguments_delta: String) {
     let state = self.states.entry(call_id).or_default();
     if let Some(name) = name {
       state.name = Some(name);
@@ -24,7 +24,7 @@ impl ToolCallAccumulator {
     state.arguments_text.push_str(&arguments_delta);
   }
 
-  pub fn complete(
+  pub(crate) fn complete(
     &mut self,
     call_id: String,
     name: String,
@@ -56,7 +56,7 @@ impl ToolCallAccumulator {
     }
   }
 
-  pub fn drain_pending(&mut self) -> Vec<AccumulatedToolCall> {
+  pub(crate) fn drain_pending(&mut self) -> Vec<AccumulatedToolCall> {
     let mut pending = Vec::new();
 
     for (call_id, state) in std::mem::take(&mut self.states) {

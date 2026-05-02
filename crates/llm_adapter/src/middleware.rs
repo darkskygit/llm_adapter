@@ -10,7 +10,7 @@ use serde_json::{Map, Value};
 
 use crate::{
   backend::{BackendError, BackendRequestLayer, ChatProtocol, StructuredProtocol},
-  core::{CoreContent, CoreRequest, CoreRole, StreamEvent},
+  core::{CoreContent, CoreRequest, CoreRole, StreamEvent, StructuredRequest},
 };
 
 pub type RequestMiddleware = fn(CoreRequest, &MiddlewareConfig) -> CoreRequest;
@@ -123,7 +123,7 @@ fn flush_pending_delta_by_newline(
   }
 }
 
-pub fn run_request_middleware_chain(
+fn run_request_middleware_chain(
   request: CoreRequest,
   config: &MiddlewareConfig,
   chain: &[RequestMiddleware],
@@ -133,7 +133,7 @@ pub fn run_request_middleware_chain(
     .fold(request, |current, middleware| middleware(current, config))
 }
 
-pub fn run_stream_middleware_chain(
+fn run_stream_middleware_chain(
   event: StreamEvent,
   context: &mut PipelineContext,
   config: &MiddlewareConfig,
@@ -172,7 +172,71 @@ pub fn run_stream_middleware_chain(
   output
 }
 
-pub fn resolve_request_middleware(name: &str) -> Result<RequestMiddleware, BackendError> {
+#[derive(Clone)]
+pub struct StreamPipeline {
+  chain: Vec<StreamMiddleware>,
+  config: MiddlewareConfig,
+  context: PipelineContext,
+}
+
+impl StreamPipeline {
+  #[must_use]
+  pub fn new(chain: Vec<StreamMiddleware>, config: MiddlewareConfig) -> Self {
+    Self {
+      chain,
+      config,
+      context: PipelineContext::default(),
+    }
+  }
+
+  pub fn process(&mut self, event: StreamEvent) -> Vec<StreamEvent> {
+    run_stream_middleware_chain(event, &mut self.context, &self.config, &self.chain)
+  }
+
+  pub fn finish(&mut self) -> Vec<StreamEvent> {
+    self.context.flush_pending_deltas();
+    self.context.drain_queued_events()
+  }
+}
+
+pub fn apply_request_middleware_names(
+  request: CoreRequest,
+  names: &[String],
+  config: &MiddlewareConfig,
+  protocol: ChatProtocol,
+  request_layer: Option<BackendRequestLayer>,
+) -> Result<CoreRequest, BackendError> {
+  let chain = resolve_request_chain(names, protocol, request_layer)?;
+  Ok(run_request_middleware_chain(request, config, &chain))
+}
+
+pub fn apply_structured_request_middleware_names(
+  request: StructuredRequest,
+  names: &[String],
+  config: &MiddlewareConfig,
+  protocol: StructuredProtocol,
+  request_layer: Option<BackendRequestLayer>,
+) -> Result<StructuredRequest, BackendError> {
+  let mut core = request.as_core_request();
+  let chain = resolve_structured_request_chain(names, protocol, request_layer)?;
+  core = run_request_middleware_chain(core, config, &chain);
+
+  Ok(StructuredRequest {
+    model: core.model,
+    messages: core.messages,
+    schema: core.response_schema.ok_or_else(|| BackendError::InvalidRequest {
+      field: "schema",
+      message: "Structured request schema is required".to_string(),
+    })?,
+    max_tokens: core.max_tokens,
+    temperature: core.temperature,
+    reasoning: core.reasoning,
+    strict: request.strict,
+    response_mime_type: request.response_mime_type,
+  })
+}
+
+fn resolve_request_middleware(name: &str) -> Result<RequestMiddleware, BackendError> {
   match name {
     "normalize_messages" => Ok(normalize_messages as RequestMiddleware),
     "clamp_max_tokens" => Ok(clamp_max_tokens as RequestMiddleware),
@@ -185,7 +249,7 @@ pub fn resolve_request_middleware(name: &str) -> Result<RequestMiddleware, Backe
   }
 }
 
-pub fn resolve_stream_middleware(name: &str) -> Result<StreamMiddleware, BackendError> {
+fn resolve_stream_middleware(name: &str) -> Result<StreamMiddleware, BackendError> {
   match name {
     "stream_event_normalize" => Ok(stream_event_normalize as StreamMiddleware),
     "citation_indexing" => Ok(citation_indexing as StreamMiddleware),
@@ -196,7 +260,7 @@ pub fn resolve_stream_middleware(name: &str) -> Result<StreamMiddleware, Backend
   }
 }
 
-pub fn resolve_request_middleware_chain(
+fn resolve_request_middleware_chain(
   names: &[String],
   default: Vec<RequestMiddleware>,
 ) -> Result<Vec<RequestMiddleware>, BackendError> {
@@ -206,6 +270,28 @@ pub fn resolve_request_middleware_chain(
   names.iter().map(|name| resolve_request_middleware(name)).collect()
 }
 
+pub fn resolve_request_chain(
+  request: &[String],
+  protocol: ChatProtocol,
+  request_layer: Option<BackendRequestLayer>,
+) -> Result<Vec<RequestMiddleware>, BackendError> {
+  resolve_request_middleware_chain(
+    request,
+    resolve_default_request_middleware_chain(protocol, request_layer),
+  )
+}
+
+pub fn resolve_structured_request_chain(
+  request: &[String],
+  protocol: StructuredProtocol,
+  request_layer: Option<BackendRequestLayer>,
+) -> Result<Vec<RequestMiddleware>, BackendError> {
+  resolve_request_middleware_chain(
+    request,
+    resolve_default_structured_request_middleware_chain(protocol, request_layer),
+  )
+}
+
 pub fn resolve_stream_middleware_chain(names: &[String]) -> Result<Vec<StreamMiddleware>, BackendError> {
   if names.is_empty() {
     return Ok(resolve_default_stream_middleware_chain());
@@ -213,7 +299,7 @@ pub fn resolve_stream_middleware_chain(names: &[String]) -> Result<Vec<StreamMid
   names.iter().map(|name| resolve_stream_middleware(name)).collect()
 }
 
-pub fn resolve_default_request_middleware_chain(
+fn resolve_default_request_middleware_chain(
   protocol: ChatProtocol,
   request_layer: Option<BackendRequestLayer>,
 ) -> Vec<RequestMiddleware> {
@@ -241,7 +327,7 @@ pub fn resolve_default_request_middleware_chain(
   }
 }
 
-pub fn resolve_default_structured_request_middleware_chain(
+fn resolve_default_structured_request_middleware_chain(
   protocol: StructuredProtocol,
   request_layer: Option<BackendRequestLayer>,
 ) -> Vec<RequestMiddleware> {
@@ -261,12 +347,12 @@ pub fn resolve_default_structured_request_middleware_chain(
   }
 }
 
-pub fn resolve_default_stream_middleware_chain() -> Vec<StreamMiddleware> {
+fn resolve_default_stream_middleware_chain() -> Vec<StreamMiddleware> {
   vec![stream_event_normalize, citation_indexing]
 }
 
 #[must_use]
-pub fn normalize_messages(mut request: CoreRequest, _config: &MiddlewareConfig) -> CoreRequest {
+fn normalize_messages(mut request: CoreRequest, _config: &MiddlewareConfig) -> CoreRequest {
   for message in &mut request.messages {
     message.content = normalize_message_content(&message.content);
 
@@ -320,7 +406,7 @@ fn normalize_message_content(content: &[CoreContent]) -> Vec<CoreContent> {
 }
 
 #[must_use]
-pub fn tool_schema_rewrite(mut request: CoreRequest, config: &MiddlewareConfig) -> CoreRequest {
+fn tool_schema_rewrite(mut request: CoreRequest, config: &MiddlewareConfig) -> CoreRequest {
   for tool in &mut request.tools {
     tool.parameters = rewrite_schema(&tool.parameters, config);
   }
@@ -328,7 +414,7 @@ pub fn tool_schema_rewrite(mut request: CoreRequest, config: &MiddlewareConfig) 
 }
 
 #[must_use]
-pub fn clamp_max_tokens(mut request: CoreRequest, config: &MiddlewareConfig) -> CoreRequest {
+fn clamp_max_tokens(mut request: CoreRequest, config: &MiddlewareConfig) -> CoreRequest {
   let cap = config
     .max_tokens_cap
     .unwrap_or_else(|| default_max_tokens_cap(&request.model));
@@ -341,7 +427,7 @@ pub fn clamp_max_tokens(mut request: CoreRequest, config: &MiddlewareConfig) -> 
 }
 
 #[must_use]
-pub fn openai_request_compat(mut request: CoreRequest, _config: &MiddlewareConfig) -> CoreRequest {
+fn openai_request_compat(mut request: CoreRequest, _config: &MiddlewareConfig) -> CoreRequest {
   if request.model.to_ascii_lowercase().starts_with("gpt-5") {
     request.temperature = None;
   }
@@ -411,7 +497,7 @@ fn rewrite_schema(value: &Value, config: &MiddlewareConfig) -> Value {
   }
 }
 
-pub fn stream_event_normalize(
+fn stream_event_normalize(
   event: StreamEvent,
   context: &mut PipelineContext,
   _config: &MiddlewareConfig,
@@ -451,7 +537,7 @@ pub fn stream_event_normalize(
   }
 }
 
-pub fn citation_indexing(
+fn citation_indexing(
   event: StreamEvent,
   context: &mut PipelineContext,
   _config: &MiddlewareConfig,
@@ -716,7 +802,8 @@ fn event_type_name(event: &StreamEvent) -> &'static str {
 }
 
 #[must_use]
-pub fn merge_stream_events(events: &[StreamEvent]) -> Vec<StreamEvent> {
+#[cfg(test)]
+fn merge_stream_events(events: &[StreamEvent]) -> Vec<StreamEvent> {
   events.iter().cloned().fold(Vec::new(), |mut output, current| {
     let mut previous = output.last_mut();
     match (&mut previous, &current) {
@@ -1043,6 +1130,48 @@ mod tests {
         },
       ]
     );
+  }
+
+  #[test]
+  fn stream_pipeline_should_flush_pending_events_on_finish() {
+    let chain = vec![stream_event_normalize as StreamMiddleware];
+    let mut pipeline = StreamPipeline::new(chain, MiddlewareConfig::default());
+
+    assert!(
+      pipeline
+        .process(StreamEvent::TextDelta {
+          text: "hello".to_string(),
+        })
+        .is_empty()
+    );
+
+    assert_eq!(
+      pipeline.finish(),
+      vec![StreamEvent::TextDelta {
+        text: "hello".to_string(),
+      }]
+    );
+  }
+
+  #[test]
+  fn should_apply_request_middleware_names() {
+    let request = CoreRequest {
+      model: "gpt-5.2".to_string(),
+      temperature: Some(0.7),
+      ..sample_request()
+    };
+    let names = vec!["openai_request_compat".to_string()];
+
+    let normalized = apply_request_middleware_names(
+      request,
+      &names,
+      &MiddlewareConfig::default(),
+      ChatProtocol::OpenaiChatCompletions,
+      None,
+    )
+    .unwrap();
+
+    assert_eq!(normalized.temperature, None);
   }
 
   #[test]

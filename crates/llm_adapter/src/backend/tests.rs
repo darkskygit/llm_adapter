@@ -15,8 +15,9 @@ use super::{
   },
   BackendConfig, BackendError, BackendRequestLayer, ChatProtocol, EmbeddingProtocol, HttpBody, HttpResponse,
   HttpStreamResponse, ImageProtocol, MultipartPart, RerankProtocol, StructuredProtocol, collect_stream_events,
+  dispatch::dispatch_stream_encoded_with,
   dispatch_embedding_request, dispatch_image_request, dispatch_request, dispatch_rerank_request,
-  dispatch_stream_encoded_with, dispatch_stream_events_with, dispatch_structured_request,
+  dispatch_stream_events_with, dispatch_structured_request,
 };
 
 #[test]

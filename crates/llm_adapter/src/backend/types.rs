@@ -1,10 +1,13 @@
 use std::{collections::BTreeMap, ops::Index, str::FromStr};
 
+#[cfg(feature = "schema")]
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use super::super::stream::StreamParseError;
 
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ChatProtocol {
@@ -14,6 +17,7 @@ pub enum ChatProtocol {
   GeminiGenerateContent,
 }
 
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum StructuredProtocol {
@@ -22,6 +26,7 @@ pub enum StructuredProtocol {
   GeminiGenerateContent,
 }
 
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum EmbeddingProtocol {
@@ -29,6 +34,7 @@ pub enum EmbeddingProtocol {
   Gemini,
 }
 
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RerankProtocol {
@@ -36,6 +42,7 @@ pub enum RerankProtocol {
   CloudflareWorkersAi,
 }
 
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ImageProtocol {
@@ -44,6 +51,7 @@ pub enum ImageProtocol {
   FalImage,
 }
 
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum BackendRequestLayer {
@@ -213,18 +221,23 @@ impl TryFrom<&str> for BackendRequestLayer {
   }
 }
 
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BackendConfig {
   pub base_url: String,
   pub auth_token: String,
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub request_layer: Option<BackendRequestLayer>,
-  #[serde(default)]
+  #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
   pub headers: BTreeMap<String, String>,
-  #[serde(default)]
+  #[serde(default, skip_serializing_if = "is_false")]
   pub no_streaming: bool,
   #[serde(skip_serializing_if = "Option::is_none")]
   pub timeout_ms: Option<u64>,
+}
+
+fn is_false(value: &bool) -> bool {
+  !*value
 }
 
 #[derive(Debug, Clone, PartialEq)]

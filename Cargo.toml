@@ -15,17 +15,18 @@ resolver        = "3"
     anyhow = "1"
     base64 = "0.22"
     clap = { version = "4", features = ["derive"] }
+    jsonschema = "0.46"
+    llm_adapter = { path = "crates/llm_adapter", default-features = false }
     rand = "0.10"
-reqwest = { version = "0.13", default-features = false, features = [
-    "blocking",
-    "json",
-    "rustls",
-] }
-llm_adapter = { path = "crates/llm_adapter", default-features = false }
-jsonschema = "0.46"
-schemars = "0.8"
-serde = { version = "1", features = ["derive"] }
+    reqwest = { version = "0.13", default-features = false, features = [
+        "blocking",
+        "json",
+        "rustls",
+    ] }
+    schemars = "0.8"
+    serde = { version = "1", features = ["derive"] }
     serde_json = "1"
+    sha2 = "0.10"
     thiserror = "2"
     toml = "1.1"
     ureq = { version = "3.3", default-features = false, features = [

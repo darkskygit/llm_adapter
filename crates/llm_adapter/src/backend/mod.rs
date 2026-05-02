@@ -9,9 +9,8 @@ pub use client::ReqwestHttpClient;
 #[cfg(feature = "ureq-client")]
 pub use client::UreqHttpClient;
 pub use dispatch::{
-  build_image_http_request, collect_stream_encoded, collect_stream_events, dispatch_embedding_request,
-  dispatch_image_request, dispatch_prepared_image_with_fallback, dispatch_request, dispatch_rerank_request,
-  dispatch_stream_encoded_with, dispatch_stream_events_with, dispatch_structured_request,
+  collect_stream_events, dispatch_embedding_request, dispatch_image_request, dispatch_request, dispatch_rerank_request,
+  dispatch_stream_events_with, dispatch_structured_request,
 };
 pub use request_layer::{
   AttachmentReferenceMode, AttachmentReferencePlan, AttachmentReferenceReason, RequestIntent, RequestIntentReasoning,
