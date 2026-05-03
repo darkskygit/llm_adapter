@@ -79,7 +79,18 @@ impl ImageInput {
 
     match self {
       Self::Url { url, media_type } => {
-        if url.len() > MAX_IMAGE_URL_CHARS {
+        if url.starts_with("data:") {
+          let Some((data_media_type, data_base64)) = image_data_url_parts(url) else {
+            return Err(invalid("invalid image data URL"));
+          };
+          validate_image_media_type(data_media_type, field)?;
+          if data_base64.len() > MAX_IMAGE_INPUT_BASE64_CHARS {
+            return Err(invalid("image data exceeds the per-image size limit"));
+          }
+          if decoded_base64_len(data_base64) > MAX_IMAGE_INPUT_BYTES {
+            return Err(invalid("image data exceeds the per-image size limit"));
+          }
+        } else if url.len() > MAX_IMAGE_URL_CHARS {
           return Err(invalid("`url` is too long"));
         }
         if let Some(media_type) = media_type {
@@ -128,11 +139,20 @@ impl ImageInput {
   #[must_use]
   fn estimated_byte_len(&self) -> usize {
     match self {
-      Self::Url { .. } => 0,
+      Self::Url { url, .. } => image_data_url_parts(url)
+        .map(|(_, data_base64)| decoded_base64_len(data_base64))
+        .unwrap_or(0),
       Self::Data { data_base64, .. } => decoded_base64_len(data_base64),
       Self::Bytes { data, .. } => data.len(),
     }
   }
+}
+
+fn image_data_url_parts(url: &str) -> Option<(&str, &str)> {
+  let rest = url.strip_prefix("data:")?;
+  let (metadata, data_base64) = rest.split_once(',')?;
+  let media_type = metadata.strip_suffix(";base64")?;
+  (!media_type.is_empty()).then_some((media_type, data_base64))
 }
 
 fn validate_image_media_type(media_type: &str, field: &'static str) -> Result<(), ProtocolError> {
@@ -558,6 +578,60 @@ mod tests {
         data_base64: "aW1n".to_string(),
         media_type: "image/png".to_string(),
         file_name: Some("in.png\"\r\nContent-Type: text/plain".to_string()),
+      }],
+      None,
+      ImageOptions::default(),
+      ImageProviderOptions::default(),
+    );
+
+    assert!(matches!(
+      request.validate(),
+      Err(ProtocolError::InvalidRequest { field: "images", .. })
+    ));
+  }
+
+  #[test]
+  fn should_validate_image_data_url_inputs() {
+    let request = ImageRequest::edit(
+      "fal/image-to-image".to_string(),
+      "edit".to_string(),
+      vec![ImageInput::Url {
+        url: format!("data:image/png;base64,{}", "aW1n".repeat(3_000)),
+        media_type: Some("image/png".to_string()),
+      }],
+      None,
+      ImageOptions::default(),
+      ImageProviderOptions::default(),
+    );
+
+    assert!(request.validate().is_ok());
+
+    let request = ImageRequest::edit(
+      "fal/image-to-image".to_string(),
+      "edit".to_string(),
+      vec![ImageInput::Url {
+        url: "data:text/plain;base64,aW1n".to_string(),
+        media_type: None,
+      }],
+      None,
+      ImageOptions::default(),
+      ImageProviderOptions::default(),
+    );
+
+    assert!(matches!(
+      request.validate(),
+      Err(ProtocolError::InvalidRequest { field: "images", .. })
+    ));
+  }
+
+  #[test]
+  fn should_keep_regular_image_url_length_limit() {
+    let request = ImageRequest::edit(
+      "gpt-image-1".to_string(),
+      "edit".to_string(),
+      vec![ImageInput::Url {
+        url: format!("https://example.com/{}.png", "x".repeat(MAX_IMAGE_URL_CHARS)),
+        media_type: Some("image/png".to_string()),
       }],
       None,
       ImageOptions::default(),

@@ -4,7 +4,7 @@ use ureq::{Agent, RequestBuilder};
 
 use super::{
   super::{BackendError, BackendHttpClient, HttpRequest, HttpResponse},
-  shared::{serialize_http_body, stream_utf8_chunks},
+  shared::{map_io_error, serialize_http_body, stream_utf8_chunks},
 };
 
 #[derive(Debug, Clone)]
@@ -24,13 +24,10 @@ impl BackendHttpClient for UreqHttpClient {
   fn post_json(&self, request: HttpRequest) -> Result<HttpResponse, BackendError> {
     let mut request = request;
     let body = serialize_http_body(&request.body, &mut request.headers)?;
-    let mut response =
-      self
-        .build_request(&request)?
-        .send(body.as_slice())
-        .map_err(|error| BackendError::Transport {
-          message: error.to_string(),
-        })?;
+    let mut response = self
+      .build_request(&request)?
+      .send(body.as_slice())
+      .map_err(map_ureq_error)?;
 
     let status = response.status().as_u16();
 
@@ -41,7 +38,7 @@ impl BackendHttpClient for UreqHttpClient {
       });
     }
 
-    let body = serde_json::from_reader(response.body_mut().as_reader())?;
+    let body = serde_json::from_slice(&read_response_bytes(&mut response)?)?;
     Ok(HttpResponse { status, body })
   }
 
@@ -52,13 +49,10 @@ impl BackendHttpClient for UreqHttpClient {
   ) -> Result<(), BackendError> {
     let mut request = request;
     let body = serialize_http_body(&request.body, &mut request.headers)?;
-    let mut response =
-      self
-        .build_request(&request)?
-        .send(body.as_slice())
-        .map_err(|error| BackendError::Transport {
-          message: error.to_string(),
-        })?;
+    let mut response = self
+      .build_request(&request)?
+      .send(body.as_slice())
+      .map_err(map_ureq_error)?;
 
     let status = response.status().as_u16();
 
@@ -99,14 +93,28 @@ impl UreqHttpClient {
   }
 }
 
-fn read_response_text(response: &mut ureq::http::Response<ureq::Body>) -> Result<String, BackendError> {
+fn map_ureq_error(error: ureq::Error) -> BackendError {
+  if matches!(error, ureq::Error::Timeout(_)) {
+    BackendError::Timeout {
+      message: error.to_string(),
+    }
+  } else {
+    BackendError::Transport {
+      message: error.to_string(),
+    }
+  }
+}
+
+fn read_response_bytes(response: &mut ureq::http::Response<ureq::Body>) -> Result<Vec<u8>, BackendError> {
   let mut bytes = Vec::new();
   response
     .body_mut()
     .as_reader()
     .read_to_end(&mut bytes)
-    .map_err(|error| BackendError::Transport {
-      message: error.to_string(),
-    })?;
-  Ok(String::from_utf8_lossy(&bytes).to_string())
+    .map_err(map_io_error)?;
+  Ok(bytes)
+}
+
+fn read_response_text(response: &mut ureq::http::Response<ureq::Body>) -> Result<String, BackendError> {
+  Ok(String::from_utf8_lossy(&read_response_bytes(response)?).to_string())
 }

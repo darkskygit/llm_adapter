@@ -1,4 +1,4 @@
-use std::io::Read;
+use std::io::{ErrorKind, Read};
 
 use crate::backend::{BackendError, HttpBody, MultipartPart};
 
@@ -124,9 +124,7 @@ pub(super) fn stream_utf8_chunks(
   let mut pending = Vec::new();
 
   loop {
-    let read = reader.read(&mut buf).map_err(|error| BackendError::Transport {
-      message: error.to_string(),
-    })?;
+    let read = reader.read(&mut buf).map_err(map_io_error)?;
     if read == 0 {
       break;
     }
@@ -170,6 +168,18 @@ pub(super) fn stream_utf8_chunks(
   Ok(())
 }
 
+pub(super) fn map_io_error(error: std::io::Error) -> BackendError {
+  if error.kind() == ErrorKind::TimedOut {
+    BackendError::Timeout {
+      message: error.to_string(),
+    }
+  } else {
+    BackendError::Transport {
+      message: error.to_string(),
+    }
+  }
+}
+
 #[cfg(test)]
 mod tests {
   use serde_json::json;
@@ -193,6 +203,13 @@ mod tests {
 
     assert!(body.contains("filename=\"a\\\"b\\\\c.png\""));
     assert!(body.contains("Content-Type: image/png"));
+  }
+
+  #[test]
+  fn should_map_timed_out_io_errors_to_timeout() {
+    let error = map_io_error(std::io::Error::new(ErrorKind::TimedOut, "read timed out"));
+
+    assert!(matches!(error, BackendError::Timeout { message } if message == "read timed out"));
   }
 
   #[test]

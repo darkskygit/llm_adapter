@@ -36,14 +36,10 @@ impl BackendHttpClient for ReqwestHttpClient {
       request_builder = request_builder.timeout(Duration::from_millis(timeout_ms));
     }
 
-    let response = request_builder.send().map_err(|error| BackendError::Transport {
-      message: error.to_string(),
-    })?;
+    let response = request_builder.send().map_err(map_reqwest_error)?;
 
     let status = response.status().as_u16();
-    let body = response.bytes().map_err(|error| BackendError::Transport {
-      message: error.to_string(),
-    })?;
+    let body = response.bytes().map_err(map_reqwest_error)?;
 
     if !(200..300).contains(&status) {
       return Err(BackendError::UpstreamStatus {
@@ -74,16 +70,12 @@ impl BackendHttpClient for ReqwestHttpClient {
       request_builder = request_builder.timeout(Duration::from_millis(timeout_ms));
     }
 
-    let mut response = request_builder.send().map_err(|error| BackendError::Transport {
-      message: error.to_string(),
-    })?;
+    let mut response = request_builder.send().map_err(map_reqwest_error)?;
 
     let status = response.status().as_u16();
 
     if !(200..300).contains(&status) {
-      let body = response.bytes().map_err(|error| BackendError::Transport {
-        message: error.to_string(),
-      })?;
+      let body = response.bytes().map_err(map_reqwest_error)?;
       return Err(BackendError::UpstreamStatus {
         status,
         body: String::from_utf8_lossy(&body).to_string(),
@@ -91,6 +83,18 @@ impl BackendHttpClient for ReqwestHttpClient {
     }
 
     stream_utf8_chunks(&mut response, on_chunk)
+  }
+}
+
+fn map_reqwest_error(error: reqwest::Error) -> BackendError {
+  if error.is_timeout() {
+    BackendError::Timeout {
+      message: error.to_string(),
+    }
+  } else {
+    BackendError::Transport {
+      message: error.to_string(),
+    }
   }
 }
 
