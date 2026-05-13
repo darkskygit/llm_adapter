@@ -696,4 +696,24 @@ mod tests {
 
     assert_eq!(variant.raw_model_id, "gemini-embedding-001");
   }
+
+  #[test]
+  fn default_catalog_resolves_gemini_embedding_2() {
+    let variants = default_model_registry_variants();
+    let (api_variant, api_matched_by) =
+      resolve_model_registry_variant(&variants, Some("gemini_api"), "gemini-embedding-2")
+        .unwrap()
+        .unwrap();
+    let (vertex_variant, vertex_matched_by) =
+      resolve_model_registry_variant(&variants, Some("gemini_vertex"), "gemini-embedding-2")
+        .unwrap()
+        .unwrap();
+
+    assert_eq!(api_matched_by, "raw_model_id");
+    assert_eq!(api_variant.raw_model_id, "gemini-embedding-2");
+    assert_eq!(api_variant.display_name.as_deref(), Some("Gemini Embedding 2"));
+    assert_eq!(vertex_matched_by, "raw_model_id");
+    assert_eq!(vertex_variant.raw_model_id, "gemini-embedding-2");
+    assert_eq!(vertex_variant.display_name.as_deref(), Some("Gemini Embedding 2"));
+  }
 }

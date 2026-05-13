@@ -16,8 +16,8 @@ schema         = ["dep:schemars", "llm_adapter/schema"]
 ureq-client    = ["llm_adapter/ureq-client"]
 
 [dependencies]
-llm_adapter = { version = "0.2", default-features = false }
 jsonschema  = { workspace = true }
+llm_adapter = { workspace = true, default-features = false }
 schemars    = { workspace = true, optional = true }
 serde       = { workspace = true }
 serde_json  = { workspace = true }
