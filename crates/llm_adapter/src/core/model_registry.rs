@@ -668,12 +668,12 @@ mod tests {
   fn default_catalog_resolves_backend_scoped_aliases() {
     let variants = default_model_registry_variants();
     let (variant, matched_by) =
-      resolve_model_registry_variant(&variants, Some("anthropic_vertex"), "claude-sonnet-4.5")
+      resolve_model_registry_variant(&variants, Some("anthropic_vertex"), "claude-sonnet-4.6")
         .unwrap()
         .unwrap();
 
     assert_eq!(matched_by, "canonical");
-    assert_eq!(variant.raw_model_id, "claude-sonnet-4-5@20250929");
+    assert_eq!(variant.raw_model_id, "claude-sonnet-4-6");
   }
 
   #[test]
