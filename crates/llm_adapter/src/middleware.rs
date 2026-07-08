@@ -242,6 +242,7 @@ fn resolve_request_middleware(name: &str) -> Result<RequestMiddleware, BackendEr
     "clamp_max_tokens" => Ok(clamp_max_tokens as RequestMiddleware),
     "tool_schema_rewrite" => Ok(tool_schema_rewrite as RequestMiddleware),
     "openai_request_compat" => Ok(openai_request_compat as RequestMiddleware),
+    "omit_tool_choice" => Ok(omit_tool_choice as RequestMiddleware),
     _ => Err(BackendError::InvalidRequest {
       field: "middleware.request",
       message: format!("unsupported request middleware: {name}"),
@@ -432,6 +433,12 @@ fn openai_request_compat(mut request: CoreRequest, _config: &MiddlewareConfig) -
     request.temperature = None;
   }
 
+  request
+}
+
+#[must_use]
+fn omit_tool_choice(mut request: CoreRequest, _config: &MiddlewareConfig) -> CoreRequest {
+  request.tool_choice = None;
   request
 }
 
@@ -895,11 +902,15 @@ mod tests {
   #[test]
   fn resolves_explicit_middleware_chain_or_error() {
     let chain = resolve_request_middleware_chain(
-      &["normalize_messages".to_string(), "clamp_max_tokens".to_string()],
+      &[
+        "normalize_messages".to_string(),
+        "clamp_max_tokens".to_string(),
+        "omit_tool_choice".to_string(),
+      ],
       Vec::new(),
     )
     .unwrap();
-    assert_eq!(chain.len(), 2);
+    assert_eq!(chain.len(), 3);
 
     let error = resolve_stream_middleware_chain(&["unknown".to_string()]).unwrap_err();
     assert!(matches!(
@@ -1052,6 +1063,15 @@ mod tests {
     let normalized = openai_request_compat(request, &MiddlewareConfig::default());
 
     assert_eq!(normalized.temperature, Some(0.7));
+  }
+
+  #[test]
+  fn should_omit_tool_choice() {
+    let request = sample_request();
+
+    let normalized = omit_tool_choice(request, &MiddlewareConfig::default());
+
+    assert_eq!(normalized.tool_choice, None);
   }
 
   #[test]

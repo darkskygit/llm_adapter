@@ -143,7 +143,7 @@ pub enum ExecutionTransport {
   #[serde(rename = "rerank")]
   Rerank { request: RerankRequest },
   #[serde(rename = "image")]
-  Image { request: ImageRequest },
+  Image { request: Box<ImageRequest> },
 }
 
 #[cfg_attr(feature = "schema", derive(JsonSchema))]

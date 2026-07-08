@@ -149,14 +149,10 @@ where
 
     let mut round_emitted = false;
     for event in pipelines[index].process(event) {
-      runners[index].process_event_with(
-        event,
-        |error| map_round_error(error),
-        |loop_event| {
-          round_emitted = true;
-          emit(&loop_event)
-        },
-      )?;
+      runners[index].process_event_with(event, &mut map_round_error, |loop_event| {
+        round_emitted = true;
+        emit(&loop_event)
+      })?;
     }
 
     Ok(round_emitted)
@@ -168,11 +164,7 @@ where
         break;
       }
 
-      runners[selected_index].process_event_with(
-        event,
-        |error| map_round_error(error),
-        |loop_event| emit(&loop_event),
-      )?;
+      runners[selected_index].process_event_with(event, &mut map_round_error, |loop_event| emit(&loop_event))?;
     }
   }
 

@@ -1,14 +1,20 @@
 mod anthropic;
+mod deepseek;
 mod gemini;
 mod helpers;
+mod kimi;
 mod openai;
+mod opencode;
 mod other;
 
 use self::{
   anthropic::anthropic_variants,
+  deepseek::deepseek_variants,
   gemini::gemini_variants,
   helpers::{ModelRegistryVariantContract, attachment},
+  kimi::kimi_variants,
   openai::openai_variants,
+  opencode::{opencode_go_variants, opencode_zen_variants},
   other::{cloudflare_variants, fal_variants, morph_variants, perplexity_variants},
 };
 
@@ -28,5 +34,9 @@ pub(crate) fn registry_variants() -> Vec<ModelRegistryVariantContract> {
   variants.extend(perplexity_variants());
   variants.extend(anthropic_variants(&image_attachment));
   variants.extend(morph_variants());
+  variants.extend(deepseek_variants());
+  variants.extend(kimi_variants());
+  variants.extend(opencode_go_variants());
+  variants.extend(opencode_zen_variants());
   variants
 }

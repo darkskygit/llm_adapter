@@ -716,4 +716,50 @@ mod tests {
     assert_eq!(vertex_variant.raw_model_id, "gemini-embedding-2");
     assert_eq!(vertex_variant.display_name.as_deref(), Some("Gemini Embedding 2"));
   }
+
+  #[test]
+  fn default_catalog_resolves_new_byok_providers() {
+    let variants = default_model_registry_variants();
+    let (deepseek, _) = resolve_model_registry_variant(&variants, Some("deepseek"), "deepseek-v4-pro")
+      .unwrap()
+      .unwrap();
+    let (deepseek_legacy, matched_by) = resolve_model_registry_variant(&variants, Some("deepseek"), "deepseek-chat")
+      .unwrap()
+      .unwrap();
+    let (kimi, _) = resolve_model_registry_variant(&variants, Some("kimi"), "kimi-k2.7-code-highspeed")
+      .unwrap()
+      .unwrap();
+    let (opencode_go, matched_go_by) =
+      resolve_model_registry_variant(&variants, Some("opencode_go"), "opencode-go/kimi-k2.7-code")
+        .unwrap()
+        .unwrap();
+
+    assert_eq!(deepseek.request_layer.as_deref(), Some("chat_completions_no_v1"));
+    assert_eq!(matched_by, "legacy_alias");
+    assert_eq!(deepseek_legacy.raw_model_id, "deepseek-v4-flash");
+    assert_eq!(kimi.request_layer.as_deref(), Some("chat_completions"));
+    assert_eq!(matched_go_by, "alias");
+    assert_eq!(opencode_go.raw_model_id, "kimi-k2.7-code");
+  }
+
+  #[test]
+  fn default_catalog_selects_opencode_zen_default() {
+    let variants = default_model_registry_variants();
+    let variant = select_model_registry_variant(
+      &variants,
+      "opencode_zen",
+      &ModelConditions {
+        input_types: Some(vec!["text".to_string()]),
+        attachment_kinds: None,
+        attachment_source_kinds: None,
+        has_remote_attachments: None,
+        model_id: None,
+        output_type: Some("text".to_string()),
+      },
+    )
+    .unwrap()
+    .unwrap();
+
+    assert_eq!(variant.raw_model_id, "kimi-k2.7-code");
+  }
 }

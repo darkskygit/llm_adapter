@@ -717,6 +717,62 @@ fn is_gemini_file_url(url: &url::Url, base_url: &str) -> bool {
   url.path().starts_with(&expected_prefix)
 }
 
+pub(super) fn build_extra_headers(config: &BackendConfig) -> Vec<(String, String)> {
+  let mut headers: Vec<(String, String)> = config
+    .headers
+    .iter()
+    .map(|(key, value)| (key.clone(), value.clone()))
+    .collect();
+  headers.sort_by(|a, b| a.0.cmp(&b.0));
+  headers
+}
+
+fn join_url(base_url: &str, path: &str) -> String {
+  format!("{}{}", base_url.trim_end_matches('/'), path)
+}
+
+fn build_bearer_headers(config: &BackendConfig, stream: bool) -> Vec<(String, String)> {
+  let mut headers = vec![
+    ("content-type".to_string(), "application/json".to_string()),
+    (
+      "accept".to_string(),
+      if stream {
+        "text/event-stream".to_string()
+      } else {
+        "application/json".to_string()
+      },
+    ),
+  ];
+
+  if !config.auth_token.is_empty() {
+    headers.push(("authorization".to_string(), format!("Bearer {}", config.auth_token)));
+  }
+
+  headers.sort_by(|a, b| a.0.cmp(&b.0));
+  headers
+}
+
+fn build_api_key_headers(config: &BackendConfig, stream: bool) -> Vec<(String, String)> {
+  let mut headers = vec![
+    ("content-type".to_string(), "application/json".to_string()),
+    (
+      "accept".to_string(),
+      if stream {
+        "text/event-stream".to_string()
+      } else {
+        "application/json".to_string()
+      },
+    ),
+  ];
+
+  if !config.auth_token.is_empty() {
+    headers.push(("x-goog-api-key".to_string(), config.auth_token.clone()));
+  }
+
+  headers.sort_by(|a, b| a.0.cmp(&b.0));
+  headers
+}
+
 #[cfg(test)]
 mod tests {
   use serde_json::json;
@@ -817,60 +873,4 @@ mod tests {
     );
     assert_eq!(resolved.reasoning, Some(json!({ "effort": "high" })));
   }
-}
-
-pub(super) fn build_extra_headers(config: &BackendConfig) -> Vec<(String, String)> {
-  let mut headers: Vec<(String, String)> = config
-    .headers
-    .iter()
-    .map(|(key, value)| (key.clone(), value.clone()))
-    .collect();
-  headers.sort_by(|a, b| a.0.cmp(&b.0));
-  headers
-}
-
-fn join_url(base_url: &str, path: &str) -> String {
-  format!("{}{}", base_url.trim_end_matches('/'), path)
-}
-
-fn build_bearer_headers(config: &BackendConfig, stream: bool) -> Vec<(String, String)> {
-  let mut headers = vec![
-    ("content-type".to_string(), "application/json".to_string()),
-    (
-      "accept".to_string(),
-      if stream {
-        "text/event-stream".to_string()
-      } else {
-        "application/json".to_string()
-      },
-    ),
-  ];
-
-  if !config.auth_token.is_empty() {
-    headers.push(("authorization".to_string(), format!("Bearer {}", config.auth_token)));
-  }
-
-  headers.sort_by(|a, b| a.0.cmp(&b.0));
-  headers
-}
-
-fn build_api_key_headers(config: &BackendConfig, stream: bool) -> Vec<(String, String)> {
-  let mut headers = vec![
-    ("content-type".to_string(), "application/json".to_string()),
-    (
-      "accept".to_string(),
-      if stream {
-        "text/event-stream".to_string()
-      } else {
-        "application/json".to_string()
-      },
-    ),
-  ];
-
-  if !config.auth_token.is_empty() {
-    headers.push(("x-goog-api-key".to_string(), config.auth_token.clone()));
-  }
-
-  headers.sort_by(|a, b| a.0.cmp(&b.0));
-  headers
 }

@@ -1026,11 +1026,9 @@ mod tests {
       vec![
         MockHttpResponse::Stream(Ok(HttpStreamResponse {
           status: 200,
-          body: concat!(
-            "data: {\"id\":\"chat_1\",\"object\":\"chat.completion.chunk\",\"model\":\"gpt-4.1\",\"choices\":[{\"\
-             index\":0,\"delta\":{\"content\":\"hello\"},\"finish_reason\":null}]}\n\n"
-          )
-          .to_string(),
+          body: "data: {\"id\":\"chat_1\",\"object\":\"chat.completion.chunk\",\"model\":\"gpt-4.1\",\"choices\":[{\"\
+                 index\":0,\"delta\":{\"content\":\"hello\"},\"finish_reason\":null}]}\n\n"
+            .to_string(),
         })),
         MockHttpResponse::Stream(Ok(HttpStreamResponse {
           status: 200,
