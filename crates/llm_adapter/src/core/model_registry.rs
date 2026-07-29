@@ -677,6 +677,48 @@ mod tests {
   }
 
   #[test]
+  fn default_catalog_resolves_latest_model_families() {
+    let variants = default_model_registry_variants();
+
+    let (openai, openai_matched_by) = resolve_model_registry_variant(&variants, Some("openai_responses"), "gpt-5.6")
+      .unwrap()
+      .unwrap();
+    let (anthropic, _) = resolve_model_registry_variant(&variants, Some("anthropic"), "claude-fable-5")
+      .unwrap()
+      .unwrap();
+    let (gemini, _) = resolve_model_registry_variant(&variants, Some("gemini_api"), "gemini-3.6-flash")
+      .unwrap()
+      .unwrap();
+    let (kimi, _) = resolve_model_registry_variant(&variants, Some("kimi"), "kimi-k3")
+      .unwrap()
+      .unwrap();
+    let (opencode_go, opencode_matched_by) =
+      resolve_model_registry_variant(&variants, Some("opencode_go"), "opencode-go/kimi-k3")
+        .unwrap()
+        .unwrap();
+    let (gemini_lite, gemini_lite_matched_by) =
+      resolve_model_registry_variant(&variants, Some("gemini_api"), "gemini-3.1-flash-lite-preview")
+        .unwrap()
+        .unwrap();
+    let (openai_image, image_matched_by) =
+      resolve_model_registry_variant(&variants, Some("openai_responses"), "gpt-image-2-2026-04-21")
+        .unwrap()
+        .unwrap();
+
+    assert_eq!(openai_matched_by, "alias");
+    assert_eq!(openai.raw_model_id, "gpt-5.6-sol");
+    assert_eq!(anthropic.raw_model_id, "claude-fable-5");
+    assert_eq!(gemini.raw_model_id, "gemini-3.6-flash");
+    assert_eq!(kimi.raw_model_id, "kimi-k3");
+    assert_eq!(opencode_matched_by, "alias");
+    assert_eq!(opencode_go.raw_model_id, "kimi-k3");
+    assert_eq!(gemini_lite_matched_by, "legacy_alias");
+    assert_eq!(gemini_lite.raw_model_id, "gemini-3.1-flash-lite");
+    assert_eq!(image_matched_by, "legacy_alias");
+    assert_eq!(openai_image.raw_model_id, "gpt-image-2");
+  }
+
+  #[test]
   fn default_catalog_selects_backend_default_by_output() {
     let variants = default_model_registry_variants();
     let variant = select_model_registry_variant(
@@ -760,6 +802,6 @@ mod tests {
     .unwrap()
     .unwrap();
 
-    assert_eq!(variant.raw_model_id, "kimi-k2.7-code");
+    assert_eq!(variant.raw_model_id, "kimi-k3");
   }
 }

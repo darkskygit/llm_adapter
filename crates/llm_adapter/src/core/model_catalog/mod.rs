@@ -28,14 +28,14 @@ pub(crate) fn registry_variants() -> Vec<ModelRegistryVariantContract> {
 
   let mut variants = Vec::new();
   variants.extend(openai_variants(&image_attachment));
-  variants.extend(cloudflare_variants());
+  variants.extend(cloudflare_variants(&image_attachment));
   variants.extend(fal_variants());
   variants.extend(gemini_variants(&gemini_attachment));
   variants.extend(perplexity_variants());
   variants.extend(anthropic_variants(&image_attachment));
   variants.extend(morph_variants());
   variants.extend(deepseek_variants());
-  variants.extend(kimi_variants());
+  variants.extend(kimi_variants(&image_attachment));
   variants.extend(opencode_go_variants());
   variants.extend(opencode_zen_variants());
   variants

@@ -13,6 +13,7 @@ mod chat_completions;
 mod cloudflare_workers_ai;
 mod gemini_api;
 mod gemini_vertex;
+mod perplexity_sonar;
 mod responses;
 
 use self::{
@@ -22,6 +23,7 @@ use self::{
   cloudflare_workers_ai::CloudflareWorkersAiRequestLayer,
   gemini_api::GeminiApiRequestLayer,
   gemini_vertex::GeminiVertexRequestLayer,
+  perplexity_sonar::PerplexitySonarRequestLayer,
   responses::ResponsesRequestLayer,
 };
 
@@ -82,6 +84,7 @@ const CHAT_COMPLETIONS_NO_V1_LAYER: ChatCompletionsNoV1RequestLayer = ChatComple
 const CLOUDFLARE_WORKERS_AI_LAYER: CloudflareWorkersAiRequestLayer = CloudflareWorkersAiRequestLayer;
 const GEMINI_API_LAYER: GeminiApiRequestLayer = GeminiApiRequestLayer;
 const GEMINI_VERTEX_LAYER: GeminiVertexRequestLayer = GeminiVertexRequestLayer;
+const PERPLEXITY_SONAR_LAYER: PerplexitySonarRequestLayer = PerplexitySonarRequestLayer;
 const RESPONSES_LAYER: ResponsesRequestLayer = ResponsesRequestLayer;
 const VERTEX_ANTHROPIC_LAYER: VertexAnthropicRequestLayer = VertexAnthropicRequestLayer;
 const OPENAI_IMAGES_LAYER: OpenaiImagesRequestLayer = OpenaiImagesRequestLayer;
@@ -281,6 +284,9 @@ impl BackendRequestLayer {
       ) | (
         BackendRequestLayer::CloudflareWorkersAi,
         ChatProtocol::OpenaiChatCompletions
+      ) | (
+        BackendRequestLayer::PerplexitySonar,
+        ChatProtocol::OpenaiChatCompletions
       ) | (BackendRequestLayer::Responses, ChatProtocol::OpenaiResponses)
         | (BackendRequestLayer::Anthropic, ChatProtocol::AnthropicMessages)
         | (BackendRequestLayer::VertexAnthropic, ChatProtocol::AnthropicMessages)
@@ -418,6 +424,7 @@ impl BackendRequestLayer {
       BackendRequestLayer::CloudflareWorkersAi => "cloudflare_workers_ai",
       BackendRequestLayer::GeminiApi => "gemini_api",
       BackendRequestLayer::GeminiVertex => "gemini_vertex",
+      BackendRequestLayer::PerplexitySonar => "perplexity_sonar",
       BackendRequestLayer::Responses => "responses",
       BackendRequestLayer::VertexAnthropic => "vertex_anthropic",
       BackendRequestLayer::OpenaiImages => "openai_images",
@@ -433,6 +440,7 @@ impl BackendRequestLayer {
       BackendRequestLayer::CloudflareWorkersAi => &CLOUDFLARE_WORKERS_AI_LAYER,
       BackendRequestLayer::GeminiApi => &GEMINI_API_LAYER,
       BackendRequestLayer::GeminiVertex => &GEMINI_VERTEX_LAYER,
+      BackendRequestLayer::PerplexitySonar => &PERPLEXITY_SONAR_LAYER,
       BackendRequestLayer::Responses => &RESPONSES_LAYER,
       BackendRequestLayer::VertexAnthropic => &VERTEX_ANTHROPIC_LAYER,
       BackendRequestLayer::OpenaiImages => &OPENAI_IMAGES_LAYER,

@@ -43,6 +43,10 @@ fn should_parse_protocol_and_request_layer_aliases() {
     "gemini-vertex".parse::<BackendRequestLayer>().unwrap(),
     BackendRequestLayer::GeminiVertex
   );
+  assert_eq!(
+    "perplexity-sonar".parse::<BackendRequestLayer>().unwrap(),
+    BackendRequestLayer::PerplexitySonar
+  );
 }
 
 #[test]
@@ -100,6 +104,31 @@ fn should_dispatch_openai_chat_request() {
       ("x-test-header".to_string(), "1".to_string()),
     ]
   );
+}
+
+#[test]
+fn should_dispatch_perplexity_sonar_request() {
+  let client = MockHttpClient::with_json_responses(vec![MockHttpResponse::Json(Ok(HttpResponse {
+    status: 200,
+    body: json!({
+      "id": "sonar_1",
+      "model": "sonar",
+      "choices": [{
+        "index": 0,
+        "message": { "role": "assistant", "content": "OK" },
+        "finish_reason": "stop"
+      }],
+      "usage": { "prompt_tokens": 4, "completion_tokens": 1, "total_tokens": 5 }
+    }),
+  }))]);
+  let mut config = sample_backend_config_with_header(false);
+  config.base_url = "https://api.perplexity.ai".to_string();
+  config.request_layer = Some(BackendRequestLayer::PerplexitySonar);
+
+  let response = dispatch_request(&client, &config, ChatProtocol::OpenaiChatCompletions, &sample_request()).unwrap();
+
+  assert_eq!(response.model, "sonar");
+  assert_eq!(client.requests()[0].url, "https://api.perplexity.ai/v1/sonar");
 }
 
 #[test]

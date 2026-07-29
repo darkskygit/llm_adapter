@@ -311,7 +311,9 @@ fn resolve_default_request_middleware_chain(
     | Some(BackendRequestLayer::VertexAnthropic) => {
       vec![normalize_messages, tool_schema_rewrite]
     }
-    Some(BackendRequestLayer::ChatCompletions) | Some(BackendRequestLayer::ChatCompletionsNoV1) => {
+    Some(BackendRequestLayer::ChatCompletions)
+    | Some(BackendRequestLayer::ChatCompletionsNoV1)
+    | Some(BackendRequestLayer::PerplexitySonar) => {
       vec![normalize_messages, openai_request_compat]
     }
     Some(BackendRequestLayer::CloudflareWorkersAi) | Some(BackendRequestLayer::Responses) => vec![normalize_messages],

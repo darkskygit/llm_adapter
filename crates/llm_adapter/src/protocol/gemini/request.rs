@@ -116,6 +116,10 @@ fn is_gemini_3_flash_family(model: &str) -> bool {
   is_gemini_3_model(model) && model.contains("flash")
 }
 
+fn supports_sampling_parameters(model: &str) -> bool {
+  !matches!(model, "gemini-3.6-flash" | "gemini-3.5-flash-lite")
+}
+
 fn normalize_gemini_3_thinking_level(model: &str, level: &str) -> &'static str {
   match level.to_ascii_lowercase().as_str() {
     "minimal" if is_gemini_3_flash_family(model) => "minimal",
@@ -460,7 +464,9 @@ pub fn encode(request: &CoreRequest, stream: bool, request_layer: BackendRequest
   if let Some(max_tokens) = request.max_tokens {
     generation_config.insert("maxOutputTokens".to_string(), json!(max_tokens));
   }
-  if let Some(temperature) = request.temperature {
+  if supports_sampling_parameters(&request.model)
+    && let Some(temperature) = request.temperature
+  {
     generation_config.insert("temperature".to_string(), json!(temperature));
   }
   if include_thoughts || request.reasoning.is_some() {
@@ -996,6 +1002,36 @@ mod tests {
       "minimal"
     );
     assert!(payload["generationConfig"]["thinkingConfig"]["thinkingBudget"].is_null());
+  }
+
+  #[test]
+  fn encode_should_omit_deprecated_sampling_parameters_for_latest_flash_models() {
+    for model in ["gemini-3.6-flash", "gemini-3.5-flash-lite"] {
+      let payload = encode(
+        &CoreRequest {
+          model: model.to_string(),
+          messages: vec![CoreMessage {
+            role: CoreRole::User,
+            content: vec![CoreContent::Text {
+              text: "Reply only OK".to_string(),
+            }],
+          }],
+          stream: false,
+          max_tokens: Some(64),
+          temperature: Some(0.2),
+          tools: vec![],
+          tool_choice: None,
+          include: None,
+          reasoning: None,
+          response_schema: None,
+        },
+        false,
+        BackendRequestLayer::GeminiApi,
+        "https://generativelanguage.googleapis.com/v1beta",
+      );
+
+      assert!(payload["generationConfig"]["temperature"].is_null());
+    }
   }
 
   #[test]

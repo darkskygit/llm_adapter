@@ -1,3 +1,5 @@
 /target
 .context
 .DS_Store
+*.json
+*.md
