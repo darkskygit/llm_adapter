@@ -179,9 +179,9 @@ impl BackendHttpClient for MockHttpClient {
 }
 
 pub(crate) fn sse_event(event: &str, data: Value) -> String {
-  format!("event: {event}\\ndata: {data}\\n\\n")
+  format!("event: {event}\ndata: {data}\n\n")
 }
 
 pub(crate) fn sse_done() -> String {
-  "data: [DONE]\\n\\n".to_string()
+  "data: [DONE]\n\n".to_string()
 }

@@ -225,6 +225,12 @@ mod tests {
                 "detail": "high"
               }),
             },
+            CoreContent::Image {
+              source: json!({
+                "data": "aW1hZ2U=",
+                "media_type": "image/webp"
+              }),
+            },
           ],
         },
         CoreMessage {
@@ -274,6 +280,12 @@ mod tests {
       "https://example.com/a.png"
     );
     assert_eq!(payload["input"][0]["content"][1]["detail"], "high");
+    assert_eq!(payload["input"][0]["content"][2]["type"], "input_image");
+    assert_eq!(
+      payload["input"][0]["content"][2]["image_url"],
+      "data:image/webp;base64,aW1hZ2U="
+    );
+    assert!(payload["input"][0]["content"][2].get("data").is_none());
     assert_eq!(payload["tools"][0]["name"], "doc_read");
     assert_eq!(payload["tool_choice"]["name"], Value::String("doc_read".to_string()));
     assert_eq!(payload["reasoning"]["effort"], "medium");

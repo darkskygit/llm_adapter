@@ -397,7 +397,7 @@ mod tests {
 
     let created = event_index(&frames, "response.created");
     let text_delta = event_index(&frames, "response.output_text.delta");
-    let tool_delta = event_index(&frames, "response.function_call.delta");
+    let tool_delta = event_index(&frames, "response.function_call_arguments.delta");
     let completed = event_index(&frames, "response.completed");
     assert!(created < text_delta);
     assert!(text_delta < tool_delta);

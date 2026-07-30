@@ -263,6 +263,25 @@ fn to_openai_responses_image_part(source: &Value) -> Value {
       content.insert("image_url".to_string(), Value::String(url.clone()));
     }
     Value::Object(object) => {
+      if let Some(Value::String(data)) = object.get("data") {
+        let image_url = if data.starts_with("data:") {
+          data.clone()
+        } else {
+          let media_type = object
+            .get("media_type")
+            .or_else(|| object.get("mime_type"))
+            .or_else(|| object.get("mimeType"))
+            .and_then(Value::as_str)
+            .unwrap_or("image/png");
+          format!("data:{media_type};base64,{data}")
+        };
+        content.insert("image_url".to_string(), Value::String(image_url));
+        if let Some(detail) = object.get("detail") {
+          content.insert("detail".to_string(), detail.clone());
+        }
+        return Value::Object(content);
+      }
+
       for (key, value) in object {
         match key.as_str() {
           "type" => {}

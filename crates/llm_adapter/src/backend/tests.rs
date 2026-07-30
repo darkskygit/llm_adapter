@@ -1007,20 +1007,30 @@ fn should_dispatch_openai_responses_stream() {
         }),
       ),
       sse_event(
-        "response.function_call.delta",
+        "response.output_item.added",
         json!({
-          "type": "response.function_call.delta",
+          "type": "response.output_item.added",
+          "item": {
+            "type": "function_call",
+            "call_id": "call_1",
+            "name": "doc_read",
+            "arguments": "",
+          },
+        }),
+      ),
+      sse_event(
+        "response.function_call_arguments.delta",
+        json!({
+          "type": "response.function_call_arguments.delta",
           "call_id": "call_1",
-          "name": "doc_read",
           "delta": r#"{"docId":"#,
         }),
       ),
       sse_event(
-        "response.function_call.done",
+        "response.function_call_arguments.done",
         json!({
-          "type": "response.function_call.done",
+          "type": "response.function_call_arguments.done",
           "call_id": "call_1",
-          "name": "doc_read",
           "arguments": r#"{"docId":"a1"}"#,
         }),
       ),
@@ -1051,6 +1061,21 @@ fn should_dispatch_openai_responses_stream() {
   .unwrap();
 
   assert!(!events.is_empty());
+  assert_eq!(
+    events
+      .iter()
+      .filter(|event| matches!(event, StreamEvent::ToolCall { .. }))
+      .count(),
+    1,
+    "{events:#?}"
+  );
+  assert!(events.iter().any(|event| {
+    matches!(
+      event,
+      StreamEvent::ToolCall { call_id, name, arguments, .. }
+        if call_id == "call_1" && name == "doc_read" && arguments == &json!({ "docId": "a1" })
+    )
+  }));
   assert!(events.iter().any(|event| matches!(event, StreamEvent::Done { .. })));
 
   let requests = client.requests();

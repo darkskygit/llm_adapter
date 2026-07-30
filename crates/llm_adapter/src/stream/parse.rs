@@ -442,7 +442,7 @@ impl OpenaiResponsesStreamParser {
           });
         }
       }
-      "response.function_call.delta" => {
+      "response.function_call_arguments.delta" | "response.function_call.delta" => {
         let call_id = extract_call_id(json);
         let name = get_str(json, "name").map(ToString::to_string);
         let delta = get_first_str_or(json, &["delta", "arguments_delta", "arguments"], "").to_string();
@@ -461,7 +461,7 @@ impl OpenaiResponsesStreamParser {
           state.arguments.push_str(&delta);
         }
       }
-      "response.function_call.done" => {
+      "response.function_call_arguments.done" | "response.function_call.done" => {
         let call_id = extract_call_id(json);
         let name = get_str(json, "name").map(ToString::to_string);
         let arguments = get_str(json, "arguments").map(parse_json_string);
@@ -481,14 +481,15 @@ impl OpenaiResponsesStreamParser {
         match get_str_or(&item, "type", "") {
           "function_call" => {
             let call_id = extract_call_id(&item);
-            let name = get_str_or(&item, "name", "").to_string();
-            let arguments = get_str_or(&item, "arguments", "{}");
-            events.push(StreamEvent::ToolCall {
-              call_id,
-              name,
-              arguments: parse_json_string(arguments),
-              thought: None,
-            });
+            let state = self.tool_calls.entry(call_id).or_default();
+            if let Some(name) = get_str(&item, "name") {
+              state.name = Some(name.to_string());
+            }
+            if let Some(arguments) = get_str(&item, "arguments")
+              && !arguments.is_empty()
+            {
+              state.arguments = arguments.to_string();
+            }
           }
           "function_call_output" => {
             let call_id = extract_call_id(&item);
@@ -499,6 +500,20 @@ impl OpenaiResponsesStreamParser {
             });
           }
           _ => {}
+        }
+      }
+      "response.output_item.done" => {
+        let item = json.get("item").cloned().unwrap_or_else(|| json.clone());
+        if get_str_or(&item, "type", "") == "function_call" {
+          let call_id = extract_call_id(&item);
+          let state = self.tool_calls.entry(call_id.clone()).or_default();
+          if let Some(name) = get_str(&item, "name") {
+            state.name = Some(name.to_string());
+          }
+          if let Some(arguments) = get_str(&item, "arguments") {
+            state.arguments = arguments.to_string();
+          }
+          maybe_emit_tool_call(events, &call_id, state);
         }
       }
       "response.output_text.annotation.added" => {

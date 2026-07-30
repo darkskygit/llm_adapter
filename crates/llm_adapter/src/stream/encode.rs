@@ -335,9 +335,9 @@ impl OpenaiResponsesStreamEncoder {
       } => {
         let mut frames = self.ensure_created();
         frames.push(self.next_json_frame(
-          Some("response.function_call.delta"),
+          Some("response.function_call_arguments.delta"),
           json!({
-            "type": "response.function_call.delta",
+            "type": "response.function_call_arguments.delta",
             "id": call_id,
             "call_id": call_id,
             "name": name,
@@ -355,9 +355,9 @@ impl OpenaiResponsesStreamEncoder {
       } => {
         let mut frames = self.ensure_created();
         frames.push(self.next_json_frame(
-          Some("response.function_call.done"),
+          Some("response.function_call_arguments.done"),
           json!({
-            "type": "response.function_call.done",
+            "type": "response.function_call_arguments.done",
             "id": call_id,
             "call_id": call_id,
             "name": name,
