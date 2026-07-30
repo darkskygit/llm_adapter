@@ -115,6 +115,11 @@ pub enum ToolLoopEvent {
     #[serde(skip_serializing_if = "Option::is_none")]
     usage: Option<CoreUsage>,
   },
+  Error {
+    message: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    code: Option<String>,
+  },
 }
 
 impl From<AccumulatedToolCall> for ToolLoopEvent {

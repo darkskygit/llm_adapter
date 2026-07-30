@@ -27,6 +27,31 @@ fn parse_input_item(item: Value) -> Result<CoreMessage, ProtocolError> {
       content: vec![CoreContent::Text { text }],
     }),
     Value::Object(object) => {
+      if matches!(object.get("type"), Some(Value::String(typ)) if typ == "function_call") {
+        let call_id = match object.get("call_id") {
+          Some(Value::String(call_id)) => call_id.clone(),
+          _ => return Err(ProtocolError::MissingResponseField("input[].call_id")),
+        };
+        let name = match object.get("name") {
+          Some(Value::String(name)) => name.clone(),
+          _ => return Err(ProtocolError::MissingResponseField("input[].name")),
+        };
+        let arguments = object
+          .get("arguments")
+          .cloned()
+          .map(super::parse_json)
+          .unwrap_or(Value::Null);
+        return Ok(CoreMessage {
+          role: CoreRole::Assistant,
+          content: vec![CoreContent::ToolCall {
+            call_id,
+            name,
+            arguments,
+            thought: None,
+          }],
+        });
+      }
+
       if matches!(object.get("type"), Some(Value::String(typ)) if typ == "function_call_output") {
         let call_id = match object.get("call_id") {
           Some(Value::String(call_id)) => call_id.clone(),
@@ -125,16 +150,10 @@ mod tests {
           ]
         },
         {
-          "role": "assistant",
-          "tool_calls": [
-            {
-              "id": "call_2",
-              "function": {
-                "name": "doc_update",
-                "arguments": "{\"docId\":\"123\",\"patch\":\"...\"}"
-              }
-            }
-          ]
+          "type": "function_call",
+          "call_id": "call_2",
+          "name": "doc_update",
+          "arguments": "{\"docId\":\"123\",\"patch\":\"...\"}"
         },
         {
           "type": "function_call_output",
@@ -217,6 +236,14 @@ mod tests {
             thought: Some("need context".to_string()),
           }],
         },
+        CoreMessage {
+          role: CoreRole::Tool,
+          content: vec![CoreContent::ToolResult {
+            call_id: "call_42".to_string(),
+            output: json!({ "markdown": "# a1" }),
+            is_error: None,
+          }],
+        },
       ],
       stream: false,
       max_tokens: Some(256),
@@ -250,6 +277,23 @@ mod tests {
     assert_eq!(payload["tools"][0]["name"], "doc_read");
     assert_eq!(payload["tool_choice"]["name"], Value::String("doc_read".to_string()));
     assert_eq!(payload["reasoning"]["effort"], "medium");
+    assert_eq!(
+      payload["input"][1],
+      json!({
+        "type": "function_call",
+        "call_id": "call_42",
+        "name": "doc_read",
+        "arguments": "{\"docId\":\"a1\"}"
+      })
+    );
+    assert_eq!(
+      payload["input"][2],
+      json!({
+        "type": "function_call_output",
+        "call_id": "call_42",
+        "output": "{\"markdown\":\"# a1\"}"
+      })
+    );
   }
 
   #[test]

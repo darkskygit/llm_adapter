@@ -563,15 +563,25 @@ fn core_message_to_openai(message: &CoreMessage, flavor: OpenaiRequestFlavor) ->
         arguments,
         thought,
       } => {
-        let mut tool_call = json!({
-          "id": call_id,
-          "type": "function",
-          "function": {
+        let mut tool_call = match flavor {
+          OpenaiRequestFlavor::ChatCompletions => json!({
+            "id": call_id,
+            "type": "function",
+            "function": {
+              "name": name,
+              "arguments": stringify_json(arguments),
+            },
+          }),
+          OpenaiRequestFlavor::Responses => json!({
+            "type": "function_call",
+            "call_id": call_id,
             "name": name,
             "arguments": stringify_json(arguments),
-          },
-        });
-        if let Some(thought) = thought {
+          }),
+        };
+        if flavor == OpenaiRequestFlavor::ChatCompletions
+          && let Some(thought) = thought
+        {
           tool_call["thought"] = json!(thought);
         }
         tool_calls.push(tool_call);
@@ -584,6 +594,38 @@ fn core_message_to_openai(message: &CoreMessage, flavor: OpenaiRequestFlavor) ->
         tool_results.push((call_id.clone(), output.clone(), *is_error));
       }
     }
+  }
+
+  if flavor == OpenaiRequestFlavor::Responses {
+    let mut items = Vec::new();
+    let content = if !attachment_parts.is_empty() {
+      let mut merged = Vec::new();
+      if !text_parts.is_empty() {
+        merged.push(json!({ "type": "input_text", "text": text_parts.join("") }));
+      }
+      merged.extend(attachment_parts);
+      Some(Value::Array(merged))
+    } else if !text_parts.is_empty() {
+      Some(Value::String(text_parts.join("")))
+    } else {
+      None
+    };
+
+    if let Some(content) = content {
+      items.push(json!({
+        "role": core_role_to_string(&message.role),
+        "content": content,
+      }));
+    }
+    items.extend(tool_calls);
+    items.extend(tool_results.into_iter().map(|(call_id, output, _)| {
+      json!({
+        "type": "function_call_output",
+        "call_id": call_id,
+        "output": stringify_json(&output),
+      })
+    }));
+    return items;
   }
 
   if tool_results.len() > 1 {

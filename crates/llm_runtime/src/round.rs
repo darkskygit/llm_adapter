@@ -375,5 +375,13 @@ mod tests {
     let value = serde_json::to_value(&event).unwrap();
     assert_eq!(value["type"], "tool_call");
     assert_eq!(serde_json::from_value::<ToolLoopEvent>(value).unwrap(), event);
+
+    let event = ToolLoopEvent::Error {
+      message: "upstream rejected request".to_string(),
+      code: Some("dispatch_error".to_string()),
+    };
+    let value = serde_json::to_value(&event).unwrap();
+    assert_eq!(value["type"], "error");
+    assert_eq!(serde_json::from_value::<ToolLoopEvent>(value).unwrap(), event);
   }
 }
