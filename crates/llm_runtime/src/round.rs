@@ -23,7 +23,7 @@ struct RoundProcessor {
 }
 
 #[derive(Debug, Default)]
-struct StreamRoundRunner {
+pub(crate) struct StreamRoundRunner {
   processor: RoundProcessor,
 }
 
@@ -37,7 +37,7 @@ impl StreamRoundRunner {
     self.process_event_with(event, E::from, emit)
   }
 
-  fn process_event_with<E, MapError, Emit>(
+  pub(crate) fn process_event_with<E, MapError, Emit>(
     &mut self,
     event: StreamEvent,
     map_error: MapError,
@@ -54,7 +54,7 @@ impl StreamRoundRunner {
     Ok(())
   }
 
-  fn finish(self) -> RoundOutcome {
+  pub(crate) fn finish(self) -> RoundOutcome {
     self.processor.finish()
   }
 }

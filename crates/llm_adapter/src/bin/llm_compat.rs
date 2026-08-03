@@ -22,6 +22,7 @@ use llm_adapter::{
     gemini::image::GeminiImageOptions,
     openai::images::OpenAiImageOptions,
   },
+  target::EgressPolicy,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -780,11 +781,12 @@ impl CompatibilityRunner {
 
     let backend = BackendConfig {
       base_url: provider_cfg.base_url.clone(),
-      auth_token,
+      auth_token: auth_token.into(),
       request_layer: provider_cfg.request_layer,
       headers: provider_cfg.headers.clone(),
       no_streaming: false,
       timeout_ms: Some(self.settings.timeout_seconds.saturating_mul(1000)),
+      egress_policy: EgressPolicy::PublicOnly,
     };
 
     if self.tests.basic_text {

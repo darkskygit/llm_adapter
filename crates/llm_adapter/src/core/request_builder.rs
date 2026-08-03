@@ -10,7 +10,6 @@ use crate::{
     PromptAttachmentKind, PromptAttachmentSourceKind, PromptMessageInput, StructuredRequest,
     canonicalize_prompt_messages, materialize_core_messages, validate_attachment_capability,
   },
-  protocol::{fal::options::FalImageOptions, gemini::image::GeminiImageOptions, openai::images::OpenAiImageOptions},
 };
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -68,7 +67,6 @@ pub struct ImageRequestBuildOptions {
 #[serde(rename_all = "camelCase")]
 pub struct ImageRequestFromMessages {
   pub model: String,
-  pub protocol: String,
   pub messages: Vec<PromptMessageInput>,
   #[serde(default)]
   pub options: Option<ImageRequestBuildOptions>,
@@ -187,19 +185,6 @@ fn image_input_from_attachment(attachment: &CanonicalPromptAttachment) -> Result
   }
 }
 
-fn image_provider_options(protocol: &str, options: &ImageRequestBuildOptions) -> ImageProviderOptions {
-  match protocol {
-    "openai_images" => ImageProviderOptions::Openai(OpenAiImageOptions::default()),
-    "gemini" => ImageProviderOptions::Gemini(GeminiImageOptions::default()),
-    "fal_image" => ImageProviderOptions::Fal(FalImageOptions {
-      model_name: options.model_name.clone(),
-      loras: options.loras.clone(),
-      ..Default::default()
-    }),
-    _ => ImageProviderOptions::None,
-  }
-}
-
 pub fn build_image_request_from_prompt_messages(
   request: ImageRequestFromMessages,
 ) -> Result<ImageRequest, BackendError> {
@@ -225,7 +210,7 @@ pub fn build_image_request_from_prompt_messages(
     .into_iter()
     .flatten()
     .collect::<Vec<_>>();
-  let provider_options = image_provider_options(&request.protocol, &options);
+  let provider_options = ImageProviderOptions::None;
   let request_options = ImageOptions {
     quality: options.quality,
     seed: options.seed,
@@ -303,7 +288,6 @@ mod tests {
   fn builds_image_edit_request_from_prompt_messages() {
     let request: ImageRequestFromMessages = serde_json::from_value(json!({
       "model": "gpt-image-1",
-      "protocol": "openai_images",
       "messages": [{
         "role": "user",
         "content": "remove background",

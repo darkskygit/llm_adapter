@@ -1,269 +1,340 @@
-use llm_adapter::core::{CoreRequest, EmbeddingRequest, ImageRequest, RerankRequest, StructuredRequest};
-#[cfg(feature = "schema")]
-use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use llm_adapter::{
+  backend::{BackendError, BackendHttpClient},
+  core::{CoreMessage, CoreUsage, ImageUsage, StreamEvent},
+  router::{ExecutablePreparedRoute, ExecutableResponse, dispatch_prepared_route, dispatch_prepared_stream},
+};
 use thiserror::Error;
 
-#[derive(Debug, Error)]
-pub enum ExecutionPlanCompileError {
-  #[error("invalid execution plan: {0}")]
-  InvalidJson(#[from] serde_json::Error),
-  #[error("ExecutionPlan cannot serialize host-only {owner}.{key}")]
-  HostOnlyState { owner: String, key: String },
+use crate::{RoundOutcome, RoundProcessorError, round::StreamRoundRunner};
+
+pub struct CompiledRoute {
+  route_id: String,
+  route: ExecutablePreparedRoute,
 }
 
-pub fn compile_execution_plan_value(value: Value) -> Result<SerializableExecutionPlan, ExecutionPlanCompileError> {
-  let plan = serde_json::from_value::<SerializableExecutionPlan>(value)?;
-  reject_host_only_execution_plan_state(&plan)?;
-  Ok(plan)
-}
+impl CompiledRoute {
+  #[must_use]
+  pub fn new(route_id: String, route: ExecutablePreparedRoute) -> Self {
+    Self { route_id, route }
+  }
 
-#[cfg_attr(feature = "schema", derive(JsonSchema))]
-#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
-#[serde(rename_all = "camelCase")]
-#[serde(deny_unknown_fields)]
-pub struct SerializableExecutionPlan {
-  pub routes: Vec<ExecutionRoute>,
-  pub request: ExecutionPlanRequest,
-  #[serde(skip_serializing_if = "Option::is_none")]
-  pub transport: Option<ExecutionTransport>,
-  pub route_policy: ExecutionRoutePolicy,
-  pub runtime_policy: ExecutionRuntimePolicy,
-  pub attachment_policy: ExecutionAttachmentPolicy,
-  pub response_postprocess: ExecutionResponsePostprocess,
-  #[serde(skip_serializing_if = "Option::is_none")]
-  pub host_context: Option<ExecutionHostContext>,
-}
-
-#[cfg_attr(feature = "schema", derive(JsonSchema))]
-#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
-#[serde(rename_all = "camelCase")]
-#[serde(deny_unknown_fields)]
-pub struct ExecutionRoute {
-  pub provider_id: String,
-  pub protocol: String,
-  pub model: String,
-  pub backend_config: Value,
-}
-
-#[cfg_attr(feature = "schema", derive(JsonSchema))]
-#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
-#[serde(tag = "kind")]
-#[serde(rename_all = "camelCase")]
-#[serde(deny_unknown_fields)]
-pub enum ExecutionPlanRequest {
-  #[serde(rename = "text")]
-  Text {
-    cond: Value,
-    messages: Vec<Value>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    options: Option<Value>,
-  },
-  #[serde(rename = "streamText")]
-  StreamText {
-    cond: Value,
-    messages: Vec<Value>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    options: Option<Value>,
-  },
-  #[serde(rename = "streamObject")]
-  StreamObject {
-    cond: Value,
-    messages: Vec<Value>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    options: Option<Value>,
-  },
-  #[serde(rename = "structured")]
-  Structured {
-    cond: Value,
-    messages: Vec<Value>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    options: Option<Value>,
-  },
-  #[serde(rename = "image")]
-  Image {
-    cond: Value,
-    messages: Vec<Value>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    options: Option<Value>,
-  },
-  #[serde(rename = "embedding")]
-  Embedding {
-    cond: Value,
-    #[serde(rename = "modelId")]
-    model_id: String,
-    input: Value,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    options: Option<Value>,
-  },
-  #[serde(rename = "rerank")]
-  Rerank {
-    cond: Value,
-    #[serde(rename = "modelId")]
-    model_id: String,
-    request: RerankExecutionRequest,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    options: Option<Value>,
-  },
-}
-
-#[cfg_attr(feature = "schema", derive(JsonSchema))]
-#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
-#[serde(rename_all = "camelCase")]
-#[serde(deny_unknown_fields)]
-pub struct RerankExecutionRequest {
-  pub query: String,
-  pub candidates: Vec<RerankExecutionCandidate>,
-  #[serde(skip_serializing_if = "Option::is_none")]
-  pub top_k: Option<u32>,
-}
-
-#[cfg_attr(feature = "schema", derive(JsonSchema))]
-#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
-#[serde(rename_all = "camelCase")]
-#[serde(deny_unknown_fields)]
-pub struct RerankExecutionCandidate {
-  #[serde(skip_serializing_if = "Option::is_none")]
-  pub id: Option<String>,
-  pub text: String,
-}
-
-#[cfg_attr(feature = "schema", derive(JsonSchema))]
-#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
-#[serde(tag = "kind")]
-#[serde(deny_unknown_fields)]
-pub enum ExecutionTransport {
-  #[serde(rename = "chat")]
-  Chat { request: CoreRequest },
-  #[serde(rename = "structured")]
-  Structured { request: StructuredRequest },
-  #[serde(rename = "embedding")]
-  Embedding { request: EmbeddingRequest },
-  #[serde(rename = "rerank")]
-  Rerank { request: RerankRequest },
-  #[serde(rename = "image")]
-  Image { request: Box<ImageRequest> },
-}
-
-#[cfg_attr(feature = "schema", derive(JsonSchema))]
-#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-#[serde(deny_unknown_fields)]
-pub struct ExecutionRoutePolicy {
-  pub fallback_order: Vec<String>,
-}
-
-#[cfg_attr(feature = "schema", derive(JsonSchema))]
-#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-#[serde(deny_unknown_fields)]
-pub struct ExecutionRuntimePolicy {
-  #[serde(skip_serializing_if = "Option::is_none")]
-  pub prefer: Option<String>,
-  #[serde(skip_serializing_if = "Option::is_none")]
-  pub max_steps: Option<u32>,
-}
-
-#[cfg_attr(feature = "schema", derive(JsonSchema))]
-#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-#[serde(deny_unknown_fields)]
-pub struct ExecutionAttachmentPolicy {
-  pub materialize_remote_attachments: bool,
-}
-
-#[cfg_attr(feature = "schema", derive(JsonSchema))]
-#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-#[serde(deny_unknown_fields)]
-pub struct ExecutionResponsePostprocess {
-  pub mode: String,
-}
-
-#[cfg_attr(feature = "schema", derive(JsonSchema))]
-#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
-#[serde(rename_all = "camelCase")]
-#[serde(deny_unknown_fields)]
-pub struct ExecutionHostContext {
-  #[serde(skip_serializing_if = "Option::is_none")]
-  pub current_messages: Option<Vec<Value>>,
-}
-
-fn request_options(request: &ExecutionPlanRequest) -> Option<&Value> {
-  match request {
-    ExecutionPlanRequest::Text { options, .. }
-    | ExecutionPlanRequest::StreamText { options, .. }
-    | ExecutionPlanRequest::StreamObject { options, .. }
-    | ExecutionPlanRequest::Structured { options, .. }
-    | ExecutionPlanRequest::Image { options, .. }
-    | ExecutionPlanRequest::Embedding { options, .. }
-    | ExecutionPlanRequest::Rerank { options, .. } => options.as_ref(),
+  #[must_use]
+  pub fn route_id(&self) -> &str {
+    &self.route_id
   }
 }
 
-fn reject_option_keys(options: Option<&Value>, owner: &str) -> Result<(), ExecutionPlanCompileError> {
-  let Some(options) = options.and_then(Value::as_object) else {
-    return Ok(());
-  };
+pub struct CompiledPlan {
+  candidates: Vec<CompiledRoute>,
+}
 
-  for key in ["signal", "user", "session", "workspace"] {
-    if options.contains_key(key) {
-      return Err(ExecutionPlanCompileError::HostOnlyState {
-        owner: owner.to_string(),
-        key: key.to_string(),
-      });
+#[derive(Debug, Error)]
+pub enum CompiledPlanError {
+  #[error("compiled plan requires at least one route")]
+  NoCandidates,
+  #[error(transparent)]
+  Backend(#[from] BackendError),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum RuntimeRouteEvent {
+  Selected { route_id: String },
+  Failed { route_id: String, error_kind: String },
+  Usage { route_id: String, usage: RuntimeUsage },
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum RuntimeUsage {
+  Tokens(CoreUsage),
+  Image(ImageUsage),
+}
+
+impl CompiledPlan {
+  pub fn new(candidates: Vec<CompiledRoute>) -> Result<Self, CompiledPlanError> {
+    if candidates.is_empty() {
+      Err(CompiledPlanError::NoCandidates)
+    } else {
+      Ok(Self { candidates })
     }
   }
 
-  Ok(())
+  pub fn route_ids(&self) -> impl Iterator<Item = &str> {
+    self.candidates.iter().map(|candidate| candidate.route_id.as_str())
+  }
+
+  pub fn replace_chat_messages(&mut self, messages: &[CoreMessage]) -> Result<(), CompiledPlanError> {
+    for candidate in &mut self.candidates {
+      let llm_adapter::router::ExecutableRequest::Chat(request) = &mut candidate.route.request else {
+        return Err(
+          BackendError::InvalidRequest {
+            field: "request",
+            message: "tool loop requires chat routes".to_string(),
+          }
+          .into(),
+        );
+      };
+      request.messages = messages.to_vec();
+      request.stream = true;
+    }
+    Ok(())
+  }
 }
 
-pub fn reject_host_only_execution_plan_state(
-  plan: &SerializableExecutionPlan,
-) -> Result<(), ExecutionPlanCompileError> {
-  reject_option_keys(request_options(&plan.request), "request.options")
+pub fn dispatch_compiled_round<Abort, EmitEvent, EmitRoute>(
+  client: &dyn BackendHttpClient,
+  plan: &mut CompiledPlan,
+  messages: &[CoreMessage],
+  mut should_abort: Abort,
+  mut emit_event: EmitEvent,
+  mut emit_route: EmitRoute,
+) -> Result<RoundOutcome, CompiledPlanError>
+where
+  Abort: FnMut() -> bool,
+  EmitEvent: FnMut(&crate::ToolLoopEvent) -> Result<(), BackendError>,
+  EmitRoute: FnMut(RuntimeRouteEvent),
+{
+  plan.replace_chat_messages(messages)?;
+  let mut last_error = None;
+  for candidate in &plan.candidates {
+    if should_abort() {
+      return Err(
+        BackendError::Transport {
+          message: "stream aborted".to_string(),
+        }
+        .into(),
+      );
+    }
+    let mut runner = StreamRoundRunner::default();
+    let mut emitted_content = false;
+    let result = dispatch_prepared_stream(client, &candidate.route, |event| {
+      if should_abort() {
+        return Err(BackendError::Transport {
+          message: "stream aborted".to_string(),
+        });
+      }
+      if let StreamEvent::Usage { usage } = &event {
+        emit_route(RuntimeRouteEvent::Usage {
+          route_id: candidate.route_id.clone(),
+          usage: RuntimeUsage::Tokens(usage.clone()),
+        });
+      }
+      runner.process_event_with(
+        event,
+        |error: RoundProcessorError| BackendError::Transport {
+          message: error.to_string(),
+        },
+        |event| {
+          emitted_content = true;
+          emit_event(&event)
+        },
+      )
+    });
+    match result {
+      Ok(()) => {
+        emit_route(RuntimeRouteEvent::Selected {
+          route_id: candidate.route_id.clone(),
+        });
+        return Ok(runner.finish());
+      }
+      Err(error) => {
+        emit_route(RuntimeRouteEvent::Failed {
+          route_id: candidate.route_id.clone(),
+          error_kind: error_kind(&error).to_string(),
+        });
+        if emitted_content {
+          return Err(error.into());
+        }
+        last_error = Some(error);
+      }
+    }
+  }
+  Err(last_error.unwrap_or(BackendError::NoBackendAvailable).into())
+}
+
+pub fn dispatch_compiled_plan<Emit>(
+  client: &dyn BackendHttpClient,
+  plan: &CompiledPlan,
+  mut emit: Emit,
+) -> Result<ExecutableResponse, CompiledPlanError>
+where
+  Emit: FnMut(RuntimeRouteEvent),
+{
+  let mut last_error = None;
+  for candidate in &plan.candidates {
+    match dispatch_prepared_route(client, &candidate.route) {
+      Ok(response) => {
+        emit(RuntimeRouteEvent::Selected {
+          route_id: candidate.route_id.clone(),
+        });
+        if let Some(usage) = response_usage(&response) {
+          emit(RuntimeRouteEvent::Usage {
+            route_id: candidate.route_id.clone(),
+            usage,
+          });
+        }
+        return Ok(response);
+      }
+      Err(error) => {
+        emit(RuntimeRouteEvent::Failed {
+          route_id: candidate.route_id.clone(),
+          error_kind: error_kind(&error).to_string(),
+        });
+        last_error = Some(error);
+      }
+    }
+  }
+  Err(last_error.unwrap_or(BackendError::NoBackendAvailable).into())
+}
+
+pub fn dispatch_compiled_stream<EmitEvent, EmitRoute>(
+  client: &dyn BackendHttpClient,
+  plan: &CompiledPlan,
+  mut emit_event: EmitEvent,
+  mut emit_route: EmitRoute,
+) -> Result<(), CompiledPlanError>
+where
+  EmitEvent: FnMut(StreamEvent) -> Result<(), BackendError>,
+  EmitRoute: FnMut(RuntimeRouteEvent),
+{
+  let mut last_error = None;
+  for candidate in &plan.candidates {
+    let mut emitted_content = false;
+    let result = dispatch_prepared_stream(client, &candidate.route, |event| {
+      emitted_content = true;
+      if let StreamEvent::Usage { usage } = &event {
+        emit_route(RuntimeRouteEvent::Usage {
+          route_id: candidate.route_id.clone(),
+          usage: RuntimeUsage::Tokens(usage.clone()),
+        });
+      }
+      emit_event(event)
+    });
+    match result {
+      Ok(()) => {
+        emit_route(RuntimeRouteEvent::Selected {
+          route_id: candidate.route_id.clone(),
+        });
+        return Ok(());
+      }
+      Err(error) => {
+        emit_route(RuntimeRouteEvent::Failed {
+          route_id: candidate.route_id.clone(),
+          error_kind: error_kind(&error).to_string(),
+        });
+        if emitted_content {
+          return Err(error.into());
+        }
+        last_error = Some(error);
+      }
+    }
+  }
+  Err(last_error.unwrap_or(BackendError::NoBackendAvailable).into())
+}
+
+fn response_usage(response: &ExecutableResponse) -> Option<RuntimeUsage> {
+  match response {
+    ExecutableResponse::Chat(response) => Some(RuntimeUsage::Tokens(response.usage.clone())),
+    ExecutableResponse::Structured(response) => Some(RuntimeUsage::Tokens(response.usage.clone())),
+    ExecutableResponse::Image(response) => response.usage.clone().map(RuntimeUsage::Image),
+    ExecutableResponse::Embedding(_) | ExecutableResponse::Rerank(_) => None,
+  }
+}
+
+fn error_kind(error: &BackendError) -> &'static str {
+  match error {
+    BackendError::NoBackendAvailable => "no_backend_available",
+    BackendError::InvalidConfig { .. } => "invalid_config",
+    BackendError::InvalidRequest { .. } => "invalid_request",
+    BackendError::Transport { .. } => "transport",
+    BackendError::Timeout { .. } => "timeout",
+    BackendError::UpstreamStatus { .. } => "upstream_status",
+    BackendError::InvalidResponse { .. } => "invalid_response",
+    BackendError::InvalidStructuredOutput { .. } => "invalid_structured_output",
+    BackendError::Json(_) => "json",
+    BackendError::Stream(_) => "stream",
+  }
 }
 
 #[cfg(test)]
 mod tests {
+  use std::collections::BTreeMap;
+
+  use llm_adapter::{
+    backend::{BackendConfig, BackendHttpClient, BackendRequestLayer, ChatProtocol, HttpRequest, HttpResponse},
+    core::{CoreMessage, CoreRequest, CoreRole},
+    router::{ExecutablePreparedRoute, ExecutableProtocol, ExecutableRequest},
+    target::EgressPolicy,
+  };
   use serde_json::json;
 
-  use super::{SerializableExecutionPlan, compile_execution_plan_value};
+  use super::*;
 
-  #[test]
-  fn rejects_unknown_execution_plan_fields() {
-    let error = serde_json::from_value::<SerializableExecutionPlan>(json!({
-      "routes": [],
-      "request": { "kind": "text", "cond": {}, "messages": [] },
-      "routePolicy": { "fallbackOrder": [] },
-      "runtimePolicy": {},
-      "attachmentPolicy": { "materializeRemoteAttachments": true },
-      "responsePostprocess": { "mode": "text" },
-      "extra": true
-    }))
-    .unwrap_err();
+  struct Client;
 
-    assert!(error.to_string().contains("unknown field"));
+  impl BackendHttpClient for Client {
+    fn post_json(&self, request: HttpRequest) -> Result<HttpResponse, BackendError> {
+      if request.url.contains("failed.example") {
+        return Err(BackendError::Transport {
+          message: "failed".to_string(),
+        });
+      }
+      Ok(HttpResponse {
+        status: 200,
+        body: json!({"id":"ok","model":"m","choices":[{"message":{"role":"assistant","content":"ok"}}]}),
+      })
+    }
+
+    fn post_sse(
+      &self,
+      _request: HttpRequest,
+      _on_chunk: &mut dyn FnMut(&str) -> Result<(), BackendError>,
+    ) -> Result<(), BackendError> {
+      Ok(())
+    }
+  }
+
+  fn route(base_url: &str) -> ExecutablePreparedRoute {
+    ExecutablePreparedRoute::new(
+      ExecutableProtocol::Chat(ChatProtocol::OpenaiChatCompletions),
+      "m".to_string(),
+      BackendConfig {
+        base_url: base_url.to_string(),
+        auth_token: "secret".into(),
+        request_layer: Some(BackendRequestLayer::ChatCompletions),
+        headers: BTreeMap::new(),
+        no_streaming: false,
+        timeout_ms: None,
+        egress_policy: EgressPolicy::PublicOnly,
+      },
+      ExecutableRequest::Chat(CoreRequest {
+        model: "m".to_string(),
+        messages: vec![CoreMessage {
+          role: CoreRole::User,
+          content: Vec::new(),
+        }],
+        stream: false,
+        max_tokens: None,
+        temperature: None,
+        tools: Vec::new(),
+        tool_choice: None,
+        include: None,
+        reasoning: None,
+        response_schema: None,
+      }),
+    )
+    .unwrap()
   }
 
   #[test]
-  fn compile_rejects_host_only_request_options() {
-    let error = compile_execution_plan_value(json!({
-      "routes": [],
-      "request": {
-        "kind": "text",
-        "cond": {},
-        "messages": [],
-        "options": { "signal": {} }
-      },
-      "routePolicy": { "fallbackOrder": [] },
-      "runtimePolicy": {},
-      "attachmentPolicy": { "materializeRemoteAttachments": true },
-      "responsePostprocess": { "mode": "text" }
-    }))
-    .unwrap_err();
-
-    assert!(error.to_string().contains("request.options.signal"));
+  fn owns_candidate_fallback_and_emits_only_route_ids() {
+    let plan = CompiledPlan::new(vec![
+      CompiledRoute::new("route-a".to_string(), route("https://failed.example/v1")),
+      CompiledRoute::new("route-b".to_string(), route("https://ok.example/v1")),
+    ])
+    .unwrap();
+    let mut events = Vec::new();
+    dispatch_compiled_plan(&Client, &plan, |event| events.push(event)).unwrap();
+    assert!(matches!(events[0], RuntimeRouteEvent::Failed { ref route_id, .. } if route_id == "route-a"));
+    assert!(matches!(events[1], RuntimeRouteEvent::Selected { ref route_id } if route_id == "route-b"));
   }
 }

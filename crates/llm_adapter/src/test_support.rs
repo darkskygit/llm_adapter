@@ -11,6 +11,7 @@ use crate::{
     CoreContent, CoreMessage, CoreRequest, CoreResponse, CoreRole, CoreToolChoice, CoreToolChoiceMode,
     CoreToolDefinition, CoreUsage,
   },
+  target::EgressPolicy,
 };
 
 pub(crate) fn sample_request() -> CoreRequest {
@@ -40,22 +41,24 @@ pub(crate) fn sample_request() -> CoreRequest {
 pub(crate) fn sample_backend_config(no_streaming: bool) -> BackendConfig {
   BackendConfig {
     base_url: "https://api.example.com".to_string(),
-    auth_token: "token-1".to_string(),
+    auth_token: "token-1".into(),
     request_layer: None,
     headers: BTreeMap::new(),
     no_streaming,
     timeout_ms: None,
+    egress_policy: EgressPolicy::PublicOnly,
   }
 }
 
 pub(crate) fn sample_backend_config_with_header(no_streaming: bool) -> BackendConfig {
   BackendConfig {
     base_url: "https://api.example.com".to_string(),
-    auth_token: "token-1".to_string(),
+    auth_token: "token-1".into(),
     request_layer: None,
     headers: BTreeMap::from_iter([("x-test-header".to_string(), "1".to_string())]),
     no_streaming,
     timeout_ms: Some(10_000),
+    egress_policy: EgressPolicy::PublicOnly,
   }
 }
 
@@ -118,14 +121,6 @@ impl Default for MockHttpClient {
 }
 
 impl MockHttpClient {
-  pub(crate) fn new(json_responses: Vec<MockHttpResponse>, stream_responses: Vec<MockHttpResponse>) -> Self {
-    Self {
-      json_responses: Arc::new(Mutex::new(json_responses)),
-      stream_responses: Arc::new(Mutex::new(stream_responses)),
-      ..Self::default()
-    }
-  }
-
   pub(crate) fn with_json_responses(responses: Vec<MockHttpResponse>) -> Self {
     Self {
       json_responses: Arc::new(Mutex::new(responses)),

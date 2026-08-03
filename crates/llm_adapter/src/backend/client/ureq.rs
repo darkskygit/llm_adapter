@@ -1,22 +1,52 @@
-use std::{io::Read, time::Duration};
+use std::{fmt, io::Read, net::SocketAddr, time::Duration};
 
-use ureq::{Agent, RequestBuilder};
+use ureq::{
+  Agent, RequestBuilder,
+  unversioned::{
+    resolver::{ResolvedSocketAddrs, Resolver},
+    transport::{DefaultConnector, NextTimeout},
+  },
+};
 
 use super::{
   super::{BackendError, BackendHttpClient, HttpRequest, HttpResponse},
   shared::{map_io_error, serialize_http_body, stream_utf8_chunks},
 };
 
-#[derive(Debug, Clone)]
-pub struct UreqHttpClient {
-  agent: Agent,
+#[derive(Debug, Clone, Copy, Default)]
+pub struct UreqHttpClient;
+
+struct PinnedResolver {
+  host: String,
+  addresses: Vec<SocketAddr>,
 }
 
-impl Default for UreqHttpClient {
-  fn default() -> Self {
-    Self {
-      agent: Agent::new_with_defaults(),
+impl fmt::Debug for PinnedResolver {
+  fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+    formatter
+      .debug_struct("PinnedResolver")
+      .field("host", &self.host)
+      .finish()
+  }
+}
+
+impl Resolver for PinnedResolver {
+  fn resolve(
+    &self,
+    uri: &ureq::http::Uri,
+    _config: &ureq::config::Config,
+    _timeout: NextTimeout,
+  ) -> Result<ResolvedSocketAddrs, ureq::Error> {
+    if uri.host() != Some(self.host.as_str()) {
+      return Err(ureq::Error::HostNotFound);
     }
+    let mut resolved = self.empty();
+    self
+      .addresses
+      .iter()
+      .take(16)
+      .for_each(|address| resolved.push(*address));
+    Ok(resolved)
   }
 }
 
@@ -70,7 +100,28 @@ impl BackendHttpClient for UreqHttpClient {
 
 impl UreqHttpClient {
   fn build_request(&self, request: &HttpRequest) -> Result<RequestBuilder<ureq::typestate::WithBody>, BackendError> {
-    let mut request_builder = self.agent.post(&request.url);
+    let url = url::Url::parse(&request.url).map_err(|error| BackendError::Transport {
+      message: error.to_string(),
+    })?;
+    let host = url.host_str().ok_or_else(|| BackendError::Transport {
+      message: "request URL has no host".to_string(),
+    })?;
+    let addresses = request
+      .egress_policy
+      .resolve(&request.url)
+      .map_err(|error| BackendError::Transport {
+        message: error.to_string(),
+      })?;
+    let config = Agent::config_builder().max_redirects(0).build();
+    let agent = Agent::with_parts(
+      config,
+      DefaultConnector::new(),
+      PinnedResolver {
+        host: host.to_string(),
+        addresses,
+      },
+    );
+    let mut request_builder = agent.post(&request.url);
     for (key, value) in &request.headers {
       request_builder = request_builder.header(key.as_str(), value.as_str());
     }

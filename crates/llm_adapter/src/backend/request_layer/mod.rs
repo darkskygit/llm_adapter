@@ -125,7 +125,10 @@ impl RequestLayerImpl for FalRequestLayer {
   }
 
   fn build_headers(&self, config: &BackendConfig, _stream: bool) -> Vec<(String, String)> {
-    let mut headers = vec![("Authorization".to_string(), format!("key {}", config.auth_token))];
+    let mut headers = vec![(
+      "Authorization".to_string(),
+      format!("key {}", config.auth_token.expose()),
+    )];
     headers.extend(config.headers.iter().map(|(key, value)| (key.clone(), value.clone())));
     headers
   }
@@ -753,7 +756,10 @@ fn build_bearer_headers(config: &BackendConfig, stream: bool) -> Vec<(String, St
   ];
 
   if !config.auth_token.is_empty() {
-    headers.push(("authorization".to_string(), format!("Bearer {}", config.auth_token)));
+    headers.push((
+      "authorization".to_string(),
+      format!("Bearer {}", config.auth_token.expose()),
+    ));
   }
 
   headers.sort_by(|a, b| a.0.cmp(&b.0));
@@ -774,7 +780,7 @@ fn build_api_key_headers(config: &BackendConfig, stream: bool) -> Vec<(String, S
   ];
 
   if !config.auth_token.is_empty() {
-    headers.push(("x-goog-api-key".to_string(), config.auth_token.clone()));
+    headers.push(("x-goog-api-key".to_string(), config.auth_token.expose().to_string()));
   }
 
   headers.sort_by(|a, b| a.0.cmp(&b.0));

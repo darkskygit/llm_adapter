@@ -13,6 +13,7 @@ use clap::{Parser, Subcommand};
 use llm_adapter::{
   backend::{BackendConfig, BackendRequestLayer, ChatProtocol, DefaultHttpClient, dispatch_request},
   core::{CoreContent, CoreMessage, CoreRequest, CoreRole},
+  target::EgressPolicy,
 };
 use rand::prelude::IndexedRandom;
 use serde::{Deserialize, Serialize};
@@ -346,11 +347,12 @@ impl ProviderConfig {
           protocol,
           backend: BackendConfig {
             base_url: base_url.clone(),
-            auth_token,
+            auth_token: auth_token.into(),
             request_layer: *request_layer,
             headers: headers.clone(),
             no_streaming: false,
             timeout_ms: None,
+            egress_policy: EgressPolicy::PublicOnly,
           },
         })
       }
@@ -374,11 +376,12 @@ impl ProviderConfig {
           protocol: protocol.unwrap_or(ChatProtocol::OpenaiChatCompletions),
           backend: BackendConfig {
             base_url: base_url.clone(),
-            auth_token,
+            auth_token: auth_token.into(),
             request_layer: *request_layer,
             headers: headers.clone(),
             no_streaming: false,
             timeout_ms: None,
+            egress_policy: EgressPolicy::PublicOnly,
           },
         })
       }
@@ -401,11 +404,12 @@ impl ProviderConfig {
           protocol: ChatProtocol::AnthropicMessages,
           backend: BackendConfig {
             base_url: base_url.clone(),
-            auth_token,
+            auth_token: auth_token.into(),
             request_layer: *request_layer,
             headers: headers.clone(),
             no_streaming: false,
             timeout_ms: None,
+            egress_policy: EgressPolicy::PublicOnly,
           },
         })
       }

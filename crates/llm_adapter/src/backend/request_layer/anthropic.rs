@@ -28,7 +28,7 @@ fn build_anthropic_headers(config: &BackendConfig, stream: bool) -> Vec<(String,
   ];
 
   if !config.auth_token.is_empty() {
-    headers.push(("x-api-key".to_string(), config.auth_token.clone()));
+    headers.push(("x-api-key".to_string(), config.auth_token.expose().to_string()));
   }
 
   headers.sort_by(|a, b| a.0.cmp(&b.0));

@@ -1,11 +1,12 @@
-use std::{collections::BTreeMap, ops::Index, str::FromStr};
+use std::{collections::BTreeMap, fmt, ops::Index, str::FromStr};
 
 #[cfg(feature = "schema")]
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
+use zeroize::Zeroizing;
 
-use super::super::stream::StreamParseError;
+use super::super::{stream::StreamParseError, target::EgressPolicy};
 
 #[cfg_attr(feature = "schema", derive(JsonSchema))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -223,31 +224,120 @@ impl TryFrom<&str> for BackendRequestLayer {
   }
 }
 
-#[cfg_attr(feature = "schema", derive(JsonSchema))]
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SensitiveString(Zeroizing<String>);
+
+impl SensitiveString {
+  #[must_use]
+  pub fn new(value: String) -> Self {
+    Self(Zeroizing::new(value))
+  }
+
+  #[must_use]
+  pub fn expose(&self) -> &str {
+    self.0.as_str()
+  }
+
+  #[must_use]
+  pub fn is_empty(&self) -> bool {
+    self.0.is_empty()
+  }
+}
+
+impl From<String> for SensitiveString {
+  fn from(value: String) -> Self {
+    Self::new(value)
+  }
+}
+
+impl From<&str> for SensitiveString {
+  fn from(value: &str) -> Self {
+    Self::new(value.to_string())
+  }
+}
+
+impl fmt::Debug for SensitiveString {
+  fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+    formatter.write_str("SensitiveString([REDACTED])")
+  }
+}
+
+impl PartialEq for SensitiveString {
+  fn eq(&self, other: &Self) -> bool {
+    self.expose() == other.expose()
+  }
+}
+
+impl Eq for SensitiveString {}
+
+#[derive(PartialEq, Eq)]
 pub struct BackendConfig {
   pub base_url: String,
-  pub auth_token: String,
-  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub auth_token: SensitiveString,
   pub request_layer: Option<BackendRequestLayer>,
-  #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
   pub headers: BTreeMap<String, String>,
-  #[serde(default, skip_serializing_if = "is_false")]
   pub no_streaming: bool,
-  #[serde(skip_serializing_if = "Option::is_none")]
   pub timeout_ms: Option<u64>,
+  pub egress_policy: EgressPolicy,
 }
 
-fn is_false(value: &bool) -> bool {
-  !*value
-}
-
-#[derive(Debug, Clone, PartialEq)]
+#[derive(PartialEq)]
 pub struct HttpRequest {
   pub url: String,
   pub headers: Vec<(String, String)>,
   pub body: HttpBody,
   pub timeout_ms: Option<u64>,
+  pub egress_policy: EgressPolicy,
+}
+
+impl fmt::Debug for BackendConfig {
+  fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+    formatter
+      .debug_struct("BackendConfig")
+      .field("base_url", &self.base_url)
+      .field("auth_token", &"[REDACTED]")
+      .field("request_layer", &self.request_layer)
+      .field("headers", &self.headers.keys().collect::<Vec<_>>())
+      .field("no_streaming", &self.no_streaming)
+      .field("timeout_ms", &self.timeout_ms)
+      .field("egress_policy", &self.egress_policy)
+      .finish()
+  }
+}
+
+impl fmt::Debug for HttpRequest {
+  fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+    formatter
+      .debug_struct("HttpRequest")
+      .field("url", &self.url)
+      .field(
+        "header_names",
+        &self.headers.iter().map(|(name, _)| name).collect::<Vec<_>>(),
+      )
+      .field("body", &self.body)
+      .field("timeout_ms", &self.timeout_ms)
+      .field("egress_policy", &self.egress_policy)
+      .finish()
+  }
+}
+
+impl Drop for HttpRequest {
+  fn drop(&mut self) {
+    use zeroize::Zeroize;
+    self.headers.iter_mut().for_each(|(_, value)| value.zeroize());
+  }
+}
+
+#[cfg(test)]
+impl Clone for HttpRequest {
+  fn clone(&self) -> Self {
+    Self {
+      url: self.url.clone(),
+      headers: self.headers.clone(),
+      body: self.body.clone(),
+      timeout_ms: self.timeout_ms,
+      egress_policy: self.egress_policy,
+    }
+  }
 }
 
 #[derive(Debug, Clone, PartialEq)]

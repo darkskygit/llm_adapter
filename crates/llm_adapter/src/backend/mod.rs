@@ -18,7 +18,8 @@ pub use request_layer::{
 };
 pub use types::{
   BackendConfig, BackendError, BackendHttpClient, BackendRequestLayer, ChatProtocol, EmbeddingProtocol, HttpBody,
-  HttpRequest, HttpResponse, HttpStreamResponse, ImageProtocol, MultipartPart, RerankProtocol, StructuredProtocol,
+  HttpRequest, HttpResponse, HttpStreamResponse, ImageProtocol, MultipartPart, RerankProtocol, SensitiveString,
+  StructuredProtocol,
 };
 
 #[cfg(test)]

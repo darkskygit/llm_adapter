@@ -142,7 +142,7 @@ fn should_dispatch_openai_image_generate_request() {
   }))]);
   let request = ImageRequest::generate(
     "gpt-image-1".to_string(),
-    "draw a quiet workspace".to_string(),
+    "draw a quiet landscape".to_string(),
     ImageOptions {
       n: Some(1),
       size: Some("1024x1024".to_string()),
@@ -339,7 +339,7 @@ fn should_dispatch_gemini_nano_banana_image_generate_request() {
   }))]);
   let request = ImageRequest::generate(
     "gemini-2.5-flash-image".to_string(),
-    "draw a quiet workspace".to_string(),
+    "draw a quiet landscape".to_string(),
     ImageOptions::default(),
     ImageProviderOptions::default(),
   );
@@ -364,7 +364,7 @@ fn should_dispatch_gemini_nano_banana_image_generate_request() {
   );
   assert_eq!(
     requests[0].body["contents"][0]["parts"][0]["text"],
-    "draw a quiet workspace"
+    "draw a quiet landscape"
   );
   assert!(requests[0].body.get("model").is_none());
 }
@@ -476,7 +476,7 @@ fn should_dispatch_openai_structured_request() {
         "role": "assistant",
         "content": [{
           "type": "output_text",
-          "text": "{\"summary\":\"AFFiNE\"}"
+          "text": "{\"summary\":\"Example\"}"
         }]
       }],
       "usage": {
@@ -492,7 +492,7 @@ fn should_dispatch_openai_structured_request() {
     messages: vec![CoreMessage {
       role: CoreRole::User,
       content: vec![CoreContent::Text {
-        text: "Summarize AFFiNE.".to_string(),
+        text: "Summarize the document.".to_string(),
       }],
     }],
     schema: json!({
@@ -518,8 +518,8 @@ fn should_dispatch_openai_structured_request() {
   )
   .unwrap();
 
-  assert_eq!(response.output_text, "{\"summary\":\"AFFiNE\"}");
-  assert_eq!(response.output_json, Some(json!({ "summary": "AFFiNE" })));
+  assert_eq!(response.output_text, "{\"summary\":\"Example\"}");
+  assert_eq!(response.output_json, Some(json!({ "summary": "Example" })));
   let requests = client.requests();
   assert_eq!(requests.len(), 1);
   assert_eq!(requests[0].url, "https://api.example.com/v1/responses");
@@ -538,7 +538,7 @@ fn should_extract_output_json_from_fenced_structured_response() {
         "type": "message",
         "content": [{
           "type": "output_text",
-          "text": "```json\n{\"summary\":\"AFFiNE\"}\n```"
+          "text": "```json\n{\"summary\":\"Example\"}\n```"
         }]
       }],
       "usage": {
@@ -554,7 +554,7 @@ fn should_extract_output_json_from_fenced_structured_response() {
     messages: vec![CoreMessage {
       role: CoreRole::User,
       content: vec![CoreContent::Text {
-        text: "Summarize AFFiNE.".to_string(),
+        text: "Summarize the document.".to_string(),
       }],
     }],
     schema: json!({
@@ -582,7 +582,7 @@ fn should_extract_output_json_from_fenced_structured_response() {
   assert_eq!(
     response.output_json,
     Some(json!({
-      "summary": "AFFiNE"
+      "summary": "Example"
     }))
   );
 }
@@ -598,7 +598,7 @@ fn should_fail_structured_dispatch_with_typed_error_when_output_is_not_json() {
         "type": "message",
         "content": [{
           "type": "output_text",
-          "text": "summary: AFFiNE"
+          "text": "summary: Example"
         }]
       }],
       "usage": {
@@ -614,7 +614,7 @@ fn should_fail_structured_dispatch_with_typed_error_when_output_is_not_json() {
     messages: vec![CoreMessage {
       role: CoreRole::User,
       content: vec![CoreContent::Text {
-        text: "Summarize AFFiNE.".to_string(),
+        text: "Summarize the document.".to_string(),
       }],
     }],
     schema: json!({
@@ -642,7 +642,7 @@ fn should_fail_structured_dispatch_with_typed_error_when_output_is_not_json() {
   assert!(matches!(error, BackendError::InvalidStructuredOutput { .. }));
   assert_eq!(
     error.to_string(),
-    "invalid_structured_output: structured response did not contain valid JSON: summary: AFFiNE"
+    "invalid_structured_output: structured response did not contain valid JSON: summary: Example"
   );
 }
 

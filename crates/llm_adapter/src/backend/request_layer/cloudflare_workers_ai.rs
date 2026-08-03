@@ -126,6 +126,7 @@ impl RequestLayerImpl for CloudflareWorkersAiRequestLayer {
       headers,
       body: HttpBody::Json(Value::Object(body)),
       timeout_ms: config.timeout_ms,
+      egress_policy: config.egress_policy,
     })?;
 
     let envelope: CloudflareNativeRerankEnvelope = serde_json::from_value(response.body)?;

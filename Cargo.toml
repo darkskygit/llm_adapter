@@ -34,3 +34,4 @@ resolver        = "3"
         "rustls",
     ] }
     url = "2.5"
+    zeroize = "1.8"

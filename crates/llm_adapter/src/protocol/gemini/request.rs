@@ -835,7 +835,7 @@ mod tests {
         messages: vec![CoreMessage {
           role: CoreRole::User,
           content: vec![CoreContent::Text {
-            text: "Summarize AFFiNE.".to_string(),
+            text: "Summarize the document.".to_string(),
           }],
         }],
         stream: false,

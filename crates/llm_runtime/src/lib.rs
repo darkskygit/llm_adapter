@@ -10,9 +10,8 @@ mod types;
 pub use host::{EventSink, ToolExecutor};
 pub use r#loop::run_tool_loop;
 pub use plan::{
-  ExecutionAttachmentPolicy, ExecutionHostContext, ExecutionPlanCompileError, ExecutionPlanRequest,
-  ExecutionResponsePostprocess, ExecutionRoute, ExecutionRoutePolicy, ExecutionRuntimePolicy, ExecutionTransport,
-  SerializableExecutionPlan, compile_execution_plan_value,
+  CompiledPlan, CompiledPlanError, CompiledRoute, RuntimeRouteEvent, RuntimeUsage, dispatch_compiled_plan,
+  dispatch_compiled_round, dispatch_compiled_stream,
 };
 pub use recipe::{
   RecipeDefinition, RecipeRuntimeEvent, RecipeRuntimeOutput, RecipeRuntimeStatus, RecipeRuntimeTrace,

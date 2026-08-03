@@ -1083,7 +1083,7 @@ mod tests {
 
     let first = citation_indexing(
       StreamEvent::TextDelta {
-        text: "Use ([AFFiNE](https://affine.pro".to_string(),
+        text: "Use ([Example](https://example.com".to_string(),
       },
       &mut context,
       &config,
@@ -1110,7 +1110,7 @@ mod tests {
         text: "[^1] and [^1]".to_string(),
       }
     );
-    assert_eq!(context.citations, vec!["https://affine.pro".to_string()]);
+    assert_eq!(context.citations, vec!["https://example.com".to_string()]);
   }
 
   #[test]

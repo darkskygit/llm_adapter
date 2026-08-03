@@ -3,25 +3,36 @@ use std::time::Duration;
 use reqwest::{
   blocking::Client,
   header::{HeaderMap, HeaderName, HeaderValue},
+  redirect::Policy,
 };
+use url::Url;
 
 use super::{
   super::{BackendError, BackendHttpClient, HttpRequest, HttpResponse},
   shared::{serialize_http_body, stream_utf8_chunks},
 };
 
-#[derive(Debug, Clone)]
-pub struct ReqwestHttpClient {
-  client: Client,
-}
+#[derive(Debug, Clone, Copy, Default)]
+pub struct ReqwestHttpClient;
 
-impl Default for ReqwestHttpClient {
-  fn default() -> Self {
-    let client = Client::builder()
-      .build()
-      .expect("failed to construct reqwest blocking client");
-    Self { client }
-  }
+fn build_client(request: &HttpRequest) -> Result<Client, BackendError> {
+  let url = Url::parse(&request.url).map_err(|error| BackendError::Transport {
+    message: error.to_string(),
+  })?;
+  let host = url.host_str().ok_or_else(|| BackendError::Transport {
+    message: "request URL has no host".to_string(),
+  })?;
+  let addresses = request
+    .egress_policy
+    .resolve(&request.url)
+    .map_err(|error| BackendError::Transport {
+      message: error.to_string(),
+    })?;
+  Client::builder()
+    .redirect(Policy::none())
+    .resolve_to_addrs(host, &addresses)
+    .build()
+    .map_err(map_reqwest_error)
 }
 
 impl BackendHttpClient for ReqwestHttpClient {
@@ -30,7 +41,8 @@ impl BackendHttpClient for ReqwestHttpClient {
     let body = serialize_http_body(&request.body, &mut request.headers)?;
     let headers = build_header_map(&request.headers)?;
 
-    let mut request_builder = self.client.post(&request.url).headers(headers).body(body);
+    let client = build_client(&request)?;
+    let mut request_builder = client.post(&request.url).headers(headers).body(body);
 
     if let Some(timeout_ms) = request.timeout_ms {
       request_builder = request_builder.timeout(Duration::from_millis(timeout_ms));
@@ -64,7 +76,8 @@ impl BackendHttpClient for ReqwestHttpClient {
     let body = serialize_http_body(&request.body, &mut request.headers)?;
     let headers = build_header_map(&request.headers)?;
 
-    let mut request_builder = self.client.post(&request.url).headers(headers).body(body);
+    let client = build_client(&request)?;
+    let mut request_builder = client.post(&request.url).headers(headers).body(body);
 
     if let Some(timeout_ms) = request.timeout_ms {
       request_builder = request_builder.timeout(Duration::from_millis(timeout_ms));

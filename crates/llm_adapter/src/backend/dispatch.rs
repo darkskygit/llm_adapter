@@ -204,6 +204,7 @@ fn build_http_request(
     headers,
     body: HttpBody::Json(body),
     timeout_ms: config.timeout_ms,
+    egress_policy: config.egress_policy,
   })
 }
 
@@ -228,6 +229,7 @@ fn build_structured_http_request(
       ),
     ),
     timeout_ms: config.timeout_ms,
+    egress_policy: config.egress_policy,
   })
 }
 
@@ -252,6 +254,7 @@ fn build_embedding_http_request(
       ),
     ),
     timeout_ms: config.timeout_ms,
+    egress_policy: config.egress_policy,
   })
 }
 
@@ -276,6 +279,7 @@ fn build_rerank_http_request(
       ),
     ),
     timeout_ms: config.timeout_ms,
+    egress_policy: config.egress_policy,
   })
 }
 
@@ -302,6 +306,7 @@ fn build_image_http_request(
     headers,
     body,
     timeout_ms: config.timeout_ms,
+    egress_policy: config.egress_policy,
   })
 }
 
