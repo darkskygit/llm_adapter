@@ -129,7 +129,7 @@ pub fn canonicalize_endpoint(value: &str) -> Result<String, TargetCompileError> 
 
 fn default_endpoint(provider: BackendProvider) -> Result<&'static str, TargetCompileError> {
   match provider {
-    BackendProvider::OpenAi => Ok("https://api.openai.com/v1"),
+    BackendProvider::OpenAi => Ok("https://api.openai.com"),
     BackendProvider::Anthropic => Ok("https://api.anthropic.com/v1"),
     BackendProvider::Gemini => Ok("https://generativelanguage.googleapis.com/v1beta"),
     BackendProvider::Fal => Ok("https://fal.run"),
@@ -286,6 +286,29 @@ mod tests {
     .unwrap();
     assert_eq!(target.model, "vendor/model:latest");
     assert_eq!(target.config.base_url, "https://example.com/v1");
+  }
+
+  #[test]
+  fn openai_provider_default_leaves_versioning_to_request_layers() {
+    for operation in [
+      BackendOperation::Chat,
+      BackendOperation::Structured,
+      BackendOperation::Embedding,
+      BackendOperation::Rerank,
+      BackendOperation::Image,
+    ] {
+      let target = compile_backend_target(BackendTargetInput {
+        provider: BackendProvider::OpenAi,
+        operation,
+        endpoint: BackendEndpoint::ProviderDefault,
+        model: "gpt-5.6-luna".to_string(),
+        credential: BackendCredential::new("secret".to_string()),
+        timeout_ms: None,
+        egress_policy: EgressPolicy::PublicOnly,
+      })
+      .unwrap();
+      assert_eq!(target.config.base_url, "https://api.openai.com");
+    }
   }
 
   #[test]
