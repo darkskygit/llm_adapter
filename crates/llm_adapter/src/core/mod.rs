@@ -14,6 +14,7 @@ pub use chat::{
   CoreToolChoiceMode, CoreToolDefinition, CoreUsage,
 };
 pub use embedding::{EmbeddingRequest, EmbeddingResponse, EmbeddingUsage};
+pub(crate) use image::image_data_url_parts;
 pub use image::{
   ImageArtifact, ImageEditRequest, ImageFormat, ImageGenerateRequest, ImageInput, ImageOptions, ImageProviderOptions,
   ImageRequest, ImageResponse, ImageUsage,

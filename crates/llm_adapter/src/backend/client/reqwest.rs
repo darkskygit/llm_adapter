@@ -8,7 +8,7 @@ use reqwest::{
 use url::Url;
 
 use super::{
-  super::{BackendError, BackendHttpClient, HttpRequest, HttpResponse},
+  super::{BackendError, BackendHttpClient, HttpRequest, HttpResponse, HttpUploadRequest},
   shared::{serialize_http_body, stream_utf8_chunks},
 };
 
@@ -96,6 +96,40 @@ impl BackendHttpClient for ReqwestHttpClient {
     }
 
     stream_utf8_chunks(&mut response, on_chunk)
+  }
+
+  fn put_bytes(&self, request: HttpUploadRequest) -> Result<(), BackendError> {
+    let headers = build_header_map(&request.headers)?;
+    let url = Url::parse(&request.url).map_err(|error| BackendError::Transport {
+      message: error.to_string(),
+    })?;
+    let host = url.host_str().ok_or_else(|| BackendError::Transport {
+      message: "request URL has no host".to_string(),
+    })?;
+    let addresses = request
+      .egress_policy
+      .resolve(&request.url)
+      .map_err(|error| BackendError::Transport {
+        message: error.to_string(),
+      })?;
+    let client = Client::builder()
+      .redirect(Policy::none())
+      .resolve_to_addrs(host, &addresses)
+      .build()
+      .map_err(map_reqwest_error)?;
+    let mut builder = client.put(&request.url).headers(headers).body(request.bytes);
+    if let Some(timeout_ms) = request.timeout_ms {
+      builder = builder.timeout(Duration::from_millis(timeout_ms));
+    }
+    let response = builder.send().map_err(map_reqwest_error)?;
+    let status = response.status().as_u16();
+    if !(200..300).contains(&status) {
+      return Err(BackendError::UpstreamStatus {
+        status,
+        body: String::from_utf8_lossy(&response.bytes().map_err(map_reqwest_error)?).to_string(),
+      });
+    }
+    Ok(())
   }
 }
 

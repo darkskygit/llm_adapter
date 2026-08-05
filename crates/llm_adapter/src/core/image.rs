@@ -148,7 +148,7 @@ impl ImageInput {
   }
 }
 
-fn image_data_url_parts(url: &str) -> Option<(&str, &str)> {
+pub(crate) fn image_data_url_parts(url: &str) -> Option<(&str, &str)> {
   let rest = url.strip_prefix("data:")?;
   let (metadata, data_base64) = rest.split_once(',')?;
   let media_type = metadata.strip_suffix(";base64")?;

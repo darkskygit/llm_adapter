@@ -9,7 +9,7 @@ use crate::{
   protocol::{ProtocolError, get_u32},
 };
 
-pub fn encode(request: &ImageRequest) -> Result<Value, ProtocolError> {
+pub fn encode(request: &ImageRequest, uploaded_image_url: Option<&str>) -> Result<Value, ProtocolError> {
   if request.model().starts_with("workflows/") {
     return Err(ProtocolError::InvalidRequest {
       field: "model",
@@ -22,7 +22,9 @@ pub fn encode(request: &ImageRequest) -> Result<Value, ProtocolError> {
     payload.insert("prompt".to_string(), json!(request.prompt()));
   }
   if let Some(first) = request.images().first() {
-    let url = image_url(first)?;
+    let url = uploaded_image_url
+      .map(ToString::to_string)
+      .map_or_else(|| image_url(first), Ok)?;
     payload.insert("image_url".to_string(), json!(url));
   }
   if let Some(seed) = request.options().seed {
@@ -94,10 +96,10 @@ fn image_format_to_fal_output_format(format: ImageFormat) -> &'static str {
 
 fn image_url(input: &ImageInput) -> Result<String, ProtocolError> {
   match input {
-    ImageInput::Url { url, .. } => Ok(url.clone()),
-    ImageInput::Data { .. } | ImageInput::Bytes { .. } => Err(ProtocolError::InvalidRequest {
+    ImageInput::Url { url, .. } if !url.starts_with("data:") => Ok(url.clone()),
+    ImageInput::Url { .. } | ImageInput::Data { .. } | ImageInput::Bytes { .. } => Err(ProtocolError::InvalidRequest {
       field: "images",
-      message: "Fal image dispatch requires URL image inputs".to_string(),
+      message: "Fal image dispatch requires uploaded image inputs".to_string(),
     }),
   }
 }

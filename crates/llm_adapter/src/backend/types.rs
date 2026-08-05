@@ -389,6 +389,14 @@ pub struct HttpResponse {
   pub body: serde_json::Value,
 }
 
+pub struct HttpUploadRequest {
+  pub url: String,
+  pub headers: Vec<(String, String)>,
+  pub bytes: Vec<u8>,
+  pub timeout_ms: Option<u64>,
+  pub egress_policy: EgressPolicy,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct HttpStreamResponse {
   pub status: u16,
@@ -421,6 +429,12 @@ pub enum BackendError {
 
 pub trait BackendHttpClient {
   fn post_json(&self, request: HttpRequest) -> Result<HttpResponse, BackendError>;
+
+  fn put_bytes(&self, _request: HttpUploadRequest) -> Result<(), BackendError> {
+    Err(BackendError::InvalidConfig {
+      message: "HTTP client does not support binary uploads".to_string(),
+    })
+  }
 
   fn post_sse(
     &self,

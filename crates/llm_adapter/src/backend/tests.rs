@@ -238,8 +238,20 @@ fn should_reject_fal_workflow_image_request() {
 }
 
 #[test]
-fn should_reject_fal_inline_image_input() {
-  let client = MockHttpClient::default();
+fn should_upload_fal_inline_image_input() {
+  let client = MockHttpClient::with_json_responses(vec![
+    MockHttpResponse::Json(Ok(HttpResponse {
+      status: 200,
+      body: json!({
+        "upload_url": "https://upload.example.com/signed",
+        "file_url": "https://cdn.example.com/input.png"
+      }),
+    })),
+    MockHttpResponse::Json(Ok(HttpResponse {
+      status: 200,
+      body: json!({ "images": [{ "url": "https://cdn.example.com/output.png" }] }),
+    })),
+  ]);
   let request = ImageRequest::edit(
     "flux-1/schnell".to_string(),
     "sticker".to_string(),
@@ -253,7 +265,7 @@ fn should_reject_fal_inline_image_input() {
     ImageProviderOptions::default(),
   );
 
-  let error = dispatch_image_request(
+  dispatch_image_request(
     &client,
     &BackendConfig {
       base_url: "https://fal.run".to_string(),
@@ -263,9 +275,89 @@ fn should_reject_fal_inline_image_input() {
     ImageProtocol::FalImage,
     &request,
   )
-  .unwrap_err();
+  .unwrap();
 
-  assert!(error.to_string().contains("images"));
+  let requests = client.requests();
+  assert_eq!(requests.len(), 2);
+  assert_eq!(
+    requests[0].url,
+    "https://rest.fal.ai/storage/upload/initiate?storage_type=fal-cdn-v3"
+  );
+  assert_eq!(requests[1].body["image_url"], "https://cdn.example.com/input.png");
+  assert_eq!(client.uploads()[0].0, "https://upload.example.com/signed");
+  assert_eq!(
+    client.uploads()[0].1,
+    [("Content-Type".to_string(), "image/png".to_string())]
+  );
+  assert_eq!(client.uploads()[0].2, b"image");
+
+  let incompatible_client = MockHttpClient::default();
+  let error = dispatch_image_request(
+    &incompatible_client,
+    &BackendConfig {
+      base_url: "https://fal.run".to_string(),
+      request_layer: Some(BackendRequestLayer::Responses),
+      ..sample_backend_config(false)
+    },
+    ImageProtocol::FalImage,
+    &request,
+  )
+  .unwrap_err();
+  assert!(matches!(error, BackendError::InvalidConfig { .. }));
+  assert!(incompatible_client.requests().is_empty());
+  assert!(incompatible_client.uploads().is_empty());
+
+  let custom_client = MockHttpClient::default();
+  let error = dispatch_image_request(
+    &custom_client,
+    &BackendConfig {
+      base_url: "https://images.example.com".to_string(),
+      request_layer: Some(BackendRequestLayer::Fal),
+      ..sample_backend_config(false)
+    },
+    ImageProtocol::FalImage,
+    &request,
+  )
+  .unwrap_err();
+  assert!(
+    error
+      .to_string()
+      .contains("custom Fal endpoints require URL image inputs")
+  );
+  assert!(custom_client.requests().is_empty());
+  assert!(custom_client.uploads().is_empty());
+
+  let custom_client = MockHttpClient::with_json_responses(vec![MockHttpResponse::Json(Ok(HttpResponse {
+    status: 200,
+    body: json!({ "images": [{ "url": "https://cdn.example.com/output.png" }] }),
+  }))]);
+  let url_request = ImageRequest::edit(
+    "flux-1/schnell".to_string(),
+    "sticker".to_string(),
+    vec![ImageInput::Url {
+      url: "https://cdn.example.com/input.png".to_string(),
+      media_type: Some("image/png".to_string()),
+    }],
+    None,
+    ImageOptions::default(),
+    ImageProviderOptions::default(),
+  );
+  dispatch_image_request(
+    &custom_client,
+    &BackendConfig {
+      base_url: "https://images.example.com".to_string(),
+      request_layer: Some(BackendRequestLayer::Fal),
+      ..sample_backend_config(false)
+    },
+    ImageProtocol::FalImage,
+    &url_request,
+  )
+  .unwrap();
+  assert_eq!(
+    custom_client.requests()[0].url,
+    "https://images.example.com/fal-ai/flux-1/schnell"
+  );
+  assert!(custom_client.uploads().is_empty());
 }
 
 #[test]

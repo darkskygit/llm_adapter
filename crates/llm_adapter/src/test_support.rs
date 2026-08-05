@@ -6,7 +6,9 @@ use std::{
 use serde_json::{Value, json};
 
 use crate::{
-  backend::{BackendConfig, BackendError, BackendHttpClient, HttpRequest, HttpResponse, HttpStreamResponse},
+  backend::{
+    BackendConfig, BackendError, BackendHttpClient, HttpRequest, HttpResponse, HttpStreamResponse, HttpUploadRequest,
+  },
   core::{
     CoreContent, CoreMessage, CoreRequest, CoreResponse, CoreRole, CoreToolChoice, CoreToolChoiceMode,
     CoreToolDefinition, CoreUsage,
@@ -101,9 +103,12 @@ pub(crate) enum MockHttpResponse {
   Stream(Result<HttpStreamResponse, BackendError>),
 }
 
+type MockUpload = (String, Vec<(String, String)>, Vec<u8>);
+
 #[derive(Debug, Clone)]
 pub(crate) struct MockHttpClient {
   requests: Arc<Mutex<Vec<HttpRequest>>>,
+  uploads: Arc<Mutex<Vec<MockUpload>>>,
   json_responses: Arc<Mutex<Vec<MockHttpResponse>>>,
   stream_responses: Arc<Mutex<Vec<MockHttpResponse>>>,
   stream_chunk_size: usize,
@@ -113,6 +118,7 @@ impl Default for MockHttpClient {
   fn default() -> Self {
     Self {
       requests: Arc::new(Mutex::new(Vec::new())),
+      uploads: Arc::new(Mutex::new(Vec::new())),
       json_responses: Arc::new(Mutex::new(Vec::new())),
       stream_responses: Arc::new(Mutex::new(Vec::new())),
       stream_chunk_size: 17,
@@ -138,6 +144,10 @@ impl MockHttpClient {
   pub(crate) fn requests(&self) -> Vec<HttpRequest> {
     self.requests.lock().unwrap().clone()
   }
+
+  pub(crate) fn uploads(&self) -> Vec<MockUpload> {
+    self.uploads.lock().unwrap().clone()
+  }
 }
 
 impl BackendHttpClient for MockHttpClient {
@@ -148,6 +158,15 @@ impl BackendHttpClient for MockHttpClient {
       MockHttpResponse::Json(response) => response,
       MockHttpResponse::Stream(_) => unreachable!(),
     }
+  }
+
+  fn put_bytes(&self, request: HttpUploadRequest) -> Result<(), BackendError> {
+    self
+      .uploads
+      .lock()
+      .unwrap()
+      .push((request.url, request.headers, request.bytes));
+    Ok(())
   }
 
   fn post_sse(

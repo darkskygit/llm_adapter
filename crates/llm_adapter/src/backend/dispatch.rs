@@ -13,7 +13,7 @@ use super::{
     },
   },
   BackendConfig, BackendError, BackendHttpClient, BackendRequestLayer, ChatProtocol, EmbeddingProtocol, HttpBody,
-  HttpRequest, ImageProtocol, RerankProtocol, StructuredProtocol,
+  HttpRequest, ImageProtocol, RerankProtocol, StructuredProtocol, fal_upload,
   request_layer::{
     build_extra_headers, resolve_chat_request_layer, resolve_embedding_request_layer, resolve_image_request_layer,
     resolve_rerank_request_layer, resolve_structured_request_layer,
@@ -133,11 +133,12 @@ impl ImageProtocol {
     request: &ImageRequest,
     request_layer: BackendRequestLayer,
     base_url: &str,
+    uploaded_image_url: Option<&str>,
   ) -> Result<HttpBody, ProtocolError> {
     match self {
       ImageProtocol::OpenaiImages => openai::images::encode(request),
       ImageProtocol::GeminiGenerateContent => gemini::image::encode(request, request_layer, base_url),
-      ImageProtocol::FalImage => Ok(HttpBody::Json(fal::encode(request)?)),
+      ImageProtocol::FalImage => Ok(HttpBody::Json(fal::encode(request, uploaded_image_url)?)),
     }
   }
 
@@ -284,17 +285,17 @@ fn build_rerank_http_request(
 }
 
 fn build_image_http_request(
+  request_layer: BackendRequestLayer,
   config: &BackendConfig,
   protocol: &ImageProtocol,
   request: &ImageRequest,
+  uploaded_image_url: Option<&str>,
 ) -> Result<HttpRequest, BackendError> {
-  request.validate().map_err(map_request_protocol_error)?;
-  let request_layer = resolve_image_request_layer(config, protocol)?;
   let mut headers = request_layer.build_headers(config, false);
   headers.extend(build_extra_headers(config));
   let edit = request.is_edit();
   let body = protocol
-    .encode_image_request(request, request_layer, &config.base_url)
+    .encode_image_request(request, request_layer, &config.base_url, uploaded_image_url)
     .map_err(map_request_protocol_error)?;
   let body = match body {
     HttpBody::Json(body) => HttpBody::Json(request_layer.rewrite_body(body)),
@@ -389,7 +390,20 @@ pub fn dispatch_image_request(
   protocol: ImageProtocol,
   request: &ImageRequest,
 ) -> Result<ImageResponse, BackendError> {
-  let response = client.post_json(build_image_http_request(config, &protocol, request)?)?;
+  request.validate().map_err(map_request_protocol_error)?;
+  let request_layer = resolve_image_request_layer(config, &protocol)?;
+  let uploaded_image_url = if protocol == ImageProtocol::FalImage {
+    fal_upload::upload_inline_image(client, config, request.images().first())?
+  } else {
+    None
+  };
+  let response = client.post_json(build_image_http_request(
+    request_layer,
+    config,
+    &protocol,
+    request,
+    uploaded_image_url.as_deref(),
+  )?)?;
   protocol.decode_image_response(&response.body, request)
 }
 

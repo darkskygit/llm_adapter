@@ -9,7 +9,7 @@ use ureq::{
 };
 
 use super::{
-  super::{BackendError, BackendHttpClient, HttpRequest, HttpResponse},
+  super::{BackendError, BackendHttpClient, HttpRequest, HttpResponse, HttpUploadRequest},
   shared::{map_io_error, serialize_http_body, stream_utf8_chunks},
 };
 
@@ -96,6 +96,21 @@ impl BackendHttpClient for UreqHttpClient {
     let mut reader = response.body_mut().as_reader();
     stream_utf8_chunks(&mut reader, on_chunk)
   }
+
+  fn put_bytes(&self, request: HttpUploadRequest) -> Result<(), BackendError> {
+    let mut response = self
+      .build_upload_request(&request)?
+      .send(request.bytes.as_slice())
+      .map_err(map_ureq_error)?;
+    let status = response.status().as_u16();
+    if !(200..300).contains(&status) {
+      return Err(BackendError::UpstreamStatus {
+        status,
+        body: read_response_text(&mut response)?,
+      });
+    }
+    Ok(())
+  }
 }
 
 impl UreqHttpClient {
@@ -140,6 +155,49 @@ impl UreqHttpClient {
         .timeout_recv_body(Some(timeout));
     }
 
+    Ok(config.build())
+  }
+
+  fn build_upload_request(
+    &self,
+    request: &HttpUploadRequest,
+  ) -> Result<RequestBuilder<ureq::typestate::WithBody>, BackendError> {
+    let url = url::Url::parse(&request.url).map_err(|error| BackendError::Transport {
+      message: error.to_string(),
+    })?;
+    let host = url.host_str().ok_or_else(|| BackendError::Transport {
+      message: "request URL has no host".to_string(),
+    })?;
+    let addresses = request
+      .egress_policy
+      .resolve(&request.url)
+      .map_err(|error| BackendError::Transport {
+        message: error.to_string(),
+      })?;
+    let agent = Agent::with_parts(
+      Agent::config_builder().max_redirects(0).build(),
+      DefaultConnector::new(),
+      PinnedResolver {
+        host: host.to_string(),
+        addresses,
+      },
+    );
+    let mut builder = agent.put(&request.url);
+    for (key, value) in &request.headers {
+      builder = builder.header(key.as_str(), value.as_str());
+    }
+    let mut config = builder.config().http_status_as_error(false);
+    if let Some(timeout_ms) = request.timeout_ms {
+      let timeout = Duration::from_millis(timeout_ms);
+      config = config
+        .timeout_global(Some(timeout))
+        .timeout_per_call(Some(timeout))
+        .timeout_connect(Some(timeout))
+        .timeout_send_request(Some(timeout))
+        .timeout_send_body(Some(timeout))
+        .timeout_recv_response(Some(timeout))
+        .timeout_recv_body(Some(timeout));
+    }
     Ok(config.build())
   }
 }

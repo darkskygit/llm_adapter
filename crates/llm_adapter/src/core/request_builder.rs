@@ -10,6 +10,7 @@ use crate::{
     PromptAttachmentKind, PromptAttachmentSourceKind, PromptMessageInput, StructuredRequest,
     canonicalize_prompt_messages, materialize_core_messages, validate_attachment_capability,
   },
+  protocol::fal::options::FalImageOptions,
 };
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -210,7 +211,15 @@ pub fn build_image_request_from_prompt_messages(
     .into_iter()
     .flatten()
     .collect::<Vec<_>>();
-  let provider_options = ImageProviderOptions::None;
+  let provider_options = if options.model_name.is_some() || options.loras.is_some() {
+    ImageProviderOptions::Fal(FalImageOptions {
+      model_name: options.model_name,
+      loras: options.loras,
+      ..Default::default()
+    })
+  } else {
+    ImageProviderOptions::None
+  };
   let request_options = ImageOptions {
     quality: options.quality,
     seed: options.seed,
@@ -296,7 +305,11 @@ mod tests {
           "data": "aW1n",
           "mimeType": "image/png"
         }]
-      }]
+      }],
+      "options": {
+        "modelName": "stabilityai/stable-diffusion-xl-base-1.0",
+        "loras": [{ "path": "https://example.com/sketch.safetensors", "scale": 1 }]
+      }
     }))
     .unwrap();
 
@@ -304,5 +317,17 @@ mod tests {
 
     assert!(built.is_edit());
     assert_eq!(built.images().len(), 1);
+    let fal = built.provider_options().fal().unwrap();
+    assert_eq!(
+      fal.model_name.as_deref(),
+      Some("stabilityai/stable-diffusion-xl-base-1.0")
+    );
+    assert_eq!(
+      fal.loras,
+      Some(json!([{
+        "path": "https://example.com/sketch.safetensors",
+        "scale": 1
+      }]))
+    );
   }
 }
