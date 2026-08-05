@@ -20,6 +20,7 @@ use self::{
 
 pub(crate) fn registry_variants() -> Vec<ModelRegistryVariantContract> {
   let image_attachment = attachment(&["image"], &["url", "data"], true);
+  let fal_image_attachment = attachment(&["image"], &["url", "data", "bytes"], true);
   let gemini_attachment = attachment(
     &["image", "audio", "file"],
     &["url", "data", "bytes", "file_handle"],
@@ -29,7 +30,7 @@ pub(crate) fn registry_variants() -> Vec<ModelRegistryVariantContract> {
   let mut variants = Vec::new();
   variants.extend(openai_variants(&image_attachment));
   variants.extend(cloudflare_variants(&image_attachment));
-  variants.extend(fal_variants());
+  variants.extend(fal_variants(&fal_image_attachment));
   variants.extend(gemini_variants(&gemini_attachment));
   variants.extend(perplexity_variants());
   variants.extend(anthropic_variants(&image_attachment));

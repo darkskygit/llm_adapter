@@ -342,5 +342,17 @@ mod tests {
         .any(|capability| capability.features.contains(&ModelFeature::ToolCalling))
     );
     assert!(provider_default_capability_upper_bound("openai", "unknown-model").is_none());
+
+    let fal = provider_default_capability_upper_bound("fal", "lora/image-to-image").unwrap();
+    assert!(declared_model_matches(
+      &fal,
+      &ModelRequirements {
+        input: vec![ModelInput::Text, ModelInput::Image],
+        output: vec![ModelOutput::Image],
+        features: Vec::new(),
+        attachment_kinds: vec![AttachmentKind::Image],
+        attachment_sources: vec![AttachmentSource::Data],
+      }
+    ));
   }
 }

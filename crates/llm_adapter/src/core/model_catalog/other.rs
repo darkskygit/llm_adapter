@@ -147,7 +147,7 @@ pub(super) fn cloudflare_variants(
   ]
 }
 
-pub(super) fn fal_variants() -> Vec<ModelRegistryVariantContract> {
+pub(super) fn fal_variants(image_attachment: &CapabilityAttachmentContract) -> Vec<ModelRegistryVariantContract> {
   vec![
     variant(
       "fal",
@@ -227,7 +227,13 @@ pub(super) fn fal_variants() -> Vec<ModelRegistryVariantContract> {
       "lora/image-to-image",
       &["lora/image-to-image"],
       &[],
-      vec![capability(&["image"], &["image"], false)],
+      vec![capability_with_attachments(
+        &["text", "image"],
+        &["image"],
+        image_attachment.clone(),
+        Some(image_attachment.clone()),
+        false,
+      )],
       Some("fal_image"),
       Some("fal"),
       &[],
