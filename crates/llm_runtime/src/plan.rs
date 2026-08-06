@@ -233,10 +233,15 @@ where
 
 fn response_usage(response: &ExecutableResponse) -> Option<RuntimeUsage> {
   match response {
-    ExecutableResponse::Chat(response) => Some(RuntimeUsage::Tokens(response.usage.clone())),
-    ExecutableResponse::Structured(response) => Some(RuntimeUsage::Tokens(response.usage.clone())),
+    ExecutableResponse::Chat(response) if response.usage.reported => Some(RuntimeUsage::Tokens(response.usage.clone())),
+    ExecutableResponse::Structured(response) if response.usage.reported => {
+      Some(RuntimeUsage::Tokens(response.usage.clone()))
+    }
     ExecutableResponse::Image(response) => response.usage.clone().map(RuntimeUsage::Image),
-    ExecutableResponse::Embedding(_) | ExecutableResponse::Rerank(_) => None,
+    ExecutableResponse::Chat(_)
+    | ExecutableResponse::Structured(_)
+    | ExecutableResponse::Embedding(_)
+    | ExecutableResponse::Rerank(_) => None,
   }
 }
 
@@ -280,7 +285,16 @@ mod tests {
       }
       Ok(HttpResponse {
         status: 200,
-        body: json!({"id":"ok","model":"m","choices":[{"message":{"role":"assistant","content":"ok"}}]}),
+        body: if request.url.contains("reported-zero.example") {
+          json!({
+            "id": "ok",
+            "model": "m",
+            "choices": [{"message":{"role":"assistant","content":"ok"}}],
+            "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+          })
+        } else {
+          json!({"id":"ok","model":"m","choices":[{"message":{"role":"assistant","content":"ok"}}]})
+        },
       })
     }
 
@@ -336,5 +350,22 @@ mod tests {
     dispatch_compiled_plan(&Client, &plan, |event| events.push(event)).unwrap();
     assert!(matches!(events[0], RuntimeRouteEvent::Failed { ref route_id, .. } if route_id == "route-a"));
     assert!(matches!(events[1], RuntimeRouteEvent::Selected { ref route_id } if route_id == "route-b"));
+    assert_eq!(events.len(), 2);
+
+    let plan = CompiledPlan::new(vec![CompiledRoute::new(
+      "route-zero".to_string(),
+      route("https://reported-zero.example/v1"),
+    )])
+    .unwrap();
+    let mut events = Vec::new();
+    dispatch_compiled_plan(&Client, &plan, |event| events.push(event)).unwrap();
+    assert!(matches!(events[0], RuntimeRouteEvent::Selected { ref route_id } if route_id == "route-zero"));
+    assert!(matches!(
+      events[1],
+      RuntimeRouteEvent::Usage {
+        ref route_id,
+        usage: RuntimeUsage::Tokens(CoreUsage { total_tokens: 0, .. })
+      } if route_id == "route-zero"
+    ));
   }
 }

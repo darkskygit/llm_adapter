@@ -434,7 +434,7 @@ impl Default for CompatibilityConfig {
     providers.insert(
       "openai".to_string(),
       ProviderConfig {
-        base_url: "https://api.openai.com".to_string(),
+        base_url: "https://api.openai.com/v1".to_string(),
         model: "gpt-5.2".to_string(),
         auth_token_env: Some("OPENAI_API_KEY".to_string()),
         requires_auth: true,
@@ -490,7 +490,7 @@ impl Default for CompatibilityConfig {
       "openai_image".to_string(),
       ProviderConfig {
         enabled: false,
-        base_url: "https://api.openai.com".to_string(),
+        base_url: "https://api.openai.com/v1".to_string(),
         model: "gpt-image-1".to_string(),
         auth_token_env: Some("OPENAI_API_KEY".to_string()),
         requires_auth: true,
@@ -577,7 +577,7 @@ impl Default for CompatibilityConfig {
     providers.insert(
       "groq".to_string(),
       ProviderConfig {
-        base_url: "https://api.groq.com/openai".to_string(),
+        base_url: "https://api.groq.com/openai/v1".to_string(),
         model: "llama-3.3-70b-versatile".to_string(),
         auth_token_env: Some("GROQ_API_KEY".to_string()),
         requires_auth: true,
@@ -589,7 +589,7 @@ impl Default for CompatibilityConfig {
     providers.insert(
       "xai".to_string(),
       ProviderConfig {
-        base_url: "https://api.x.ai".to_string(),
+        base_url: "https://api.x.ai/v1".to_string(),
         model: "grok-3-mini".to_string(),
         auth_token_env: Some("XAI_API_KEY".to_string()),
         requires_auth: true,
@@ -601,7 +601,7 @@ impl Default for CompatibilityConfig {
     providers.insert(
       "openrouter".to_string(),
       ProviderConfig {
-        base_url: "https://openrouter.ai/api".to_string(),
+        base_url: "https://openrouter.ai/api/v1".to_string(),
         model: "openai/gpt-5.2".to_string(),
         auth_token_env: Some("OPENROUTER_API_KEY".to_string()),
         requires_auth: true,
@@ -613,7 +613,7 @@ impl Default for CompatibilityConfig {
     providers.insert(
       "moonshot".to_string(),
       ProviderConfig {
-        base_url: "https://api.moonshot.ai".to_string(),
+        base_url: "https://api.moonshot.ai/v1".to_string(),
         model: "kimi-k2.5".to_string(),
         auth_token_env: Some("MOONSHOT_API_KEY".to_string()),
         requires_auth: true,
@@ -627,7 +627,7 @@ impl Default for CompatibilityConfig {
     providers.insert(
       "minimax".to_string(),
       ProviderConfig {
-        base_url: "https://api.minimax.io".to_string(),
+        base_url: "https://api.minimax.io/v1".to_string(),
         model: "MiniMax-M2.1".to_string(),
         auth_token_env: Some("MINIMAX_API_KEY".to_string()),
         requires_auth: true,
@@ -644,14 +644,14 @@ impl Default for CompatibilityConfig {
         auth_token_env: Some("ZHIPU_API_KEY".to_string()),
         requires_auth: true,
         chat_protocol: Some(ChatProtocol::OpenaiChatCompletions),
-        request_layer: Some(BackendRequestLayer::ChatCompletionsNoV1),
+        request_layer: Some(BackendRequestLayer::ChatCompletions),
         ..ProviderConfig::default()
       },
     );
     providers.insert(
       "ollama".to_string(),
       ProviderConfig {
-        base_url: "http://localhost:11434".to_string(),
+        base_url: "http://localhost:11434/v1".to_string(),
         model: "qwen3:14b".to_string(),
         chat_protocol: Some(ChatProtocol::OpenaiChatCompletions),
         request_layer: Some(BackendRequestLayer::ChatCompletions),
@@ -662,7 +662,7 @@ impl Default for CompatibilityConfig {
     providers.insert(
       "llama_server".to_string(),
       ProviderConfig {
-        base_url: "http://localhost:8080".to_string(),
+        base_url: "http://localhost:8080/v1".to_string(),
         model: "local-model".to_string(),
         chat_protocol: Some(ChatProtocol::OpenaiChatCompletions),
         request_layer: Some(BackendRequestLayer::ChatCompletions),
@@ -673,7 +673,7 @@ impl Default for CompatibilityConfig {
     providers.insert(
       "lmstudio".to_string(),
       ProviderConfig {
-        base_url: "http://localhost:1234".to_string(),
+        base_url: "http://localhost:1234/v1".to_string(),
         model: "local-model".to_string(),
         chat_protocol: Some(ChatProtocol::OpenaiChatCompletions),
         request_layer: Some(BackendRequestLayer::ChatCompletions),
@@ -1713,5 +1713,32 @@ impl CompatibilityReport {
       "Cases: {} passed, {} failed, {} skipped",
       self.total_passed, self.total_failed, self.total_skipped
     );
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  #[test]
+  fn openai_compatible_presets_include_their_api_version() {
+    let config = CompatibilityConfig::default();
+    let expected = [
+      ("openai", "https://api.openai.com/v1"),
+      ("openai_image", "https://api.openai.com/v1"),
+      ("groq", "https://api.groq.com/openai/v1"),
+      ("xai", "https://api.x.ai/v1"),
+      ("openrouter", "https://openrouter.ai/api/v1"),
+      ("moonshot", "https://api.moonshot.ai/v1"),
+      ("minimax", "https://api.minimax.io/v1"),
+      ("zhipu", "https://api.z.ai/api/paas/v4"),
+      ("ollama", "http://localhost:11434/v1"),
+      ("llama_server", "http://localhost:8080/v1"),
+      ("lmstudio", "http://localhost:1234/v1"),
+    ];
+
+    for (provider, base_url) in expected {
+      assert_eq!(config.providers[provider].base_url, base_url, "{provider}");
+    }
   }
 }

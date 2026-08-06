@@ -17,14 +17,10 @@ mod perplexity_sonar;
 mod responses;
 
 use self::{
-  anthropic::AnthropicRequestLayer,
-  anthropic_vertex::VertexAnthropicRequestLayer,
-  chat_completions::{ChatCompletionsNoV1RequestLayer, ChatCompletionsRequestLayer},
-  cloudflare_workers_ai::CloudflareWorkersAiRequestLayer,
-  gemini_api::GeminiApiRequestLayer,
-  gemini_vertex::GeminiVertexRequestLayer,
-  perplexity_sonar::PerplexitySonarRequestLayer,
-  responses::ResponsesRequestLayer,
+  anthropic::AnthropicRequestLayer, anthropic_vertex::VertexAnthropicRequestLayer,
+  chat_completions::ChatCompletionsRequestLayer, cloudflare_workers_ai::CloudflareWorkersAiRequestLayer,
+  gemini_api::GeminiApiRequestLayer, gemini_vertex::GeminiVertexRequestLayer,
+  perplexity_sonar::PerplexitySonarRequestLayer, responses::ResponsesRequestLayer,
 };
 
 // Design note:
@@ -80,7 +76,6 @@ trait RequestLayerImpl {
 
 const ANTHROPIC_LAYER: AnthropicRequestLayer = AnthropicRequestLayer;
 const CHAT_COMPLETIONS_LAYER: ChatCompletionsRequestLayer = ChatCompletionsRequestLayer;
-const CHAT_COMPLETIONS_NO_V1_LAYER: ChatCompletionsNoV1RequestLayer = ChatCompletionsNoV1RequestLayer;
 const CLOUDFLARE_WORKERS_AI_LAYER: CloudflareWorkersAiRequestLayer = CloudflareWorkersAiRequestLayer;
 const GEMINI_API_LAYER: GeminiApiRequestLayer = GeminiApiRequestLayer;
 const GEMINI_VERTEX_LAYER: GeminiVertexRequestLayer = GeminiVertexRequestLayer;
@@ -95,7 +90,7 @@ struct OpenaiImagesRequestLayer;
 
 impl RequestLayerImpl for OpenaiImagesRequestLayer {
   fn build_url(&self, base_url: &str, _model: &str, _stream: bool) -> String {
-    join_url(base_url, "/v1/images/generations")
+    join_url(base_url, "/images/generations")
   }
 
   fn build_headers(&self, config: &BackendConfig, stream: bool) -> Vec<(String, String)> {
@@ -105,14 +100,7 @@ impl RequestLayerImpl for OpenaiImagesRequestLayer {
 
 impl OpenaiImagesRequestLayer {
   fn build_image_url(&self, base_url: &str, edit: bool) -> String {
-    join_url(
-      base_url,
-      if edit {
-        "/v1/images/edits"
-      } else {
-        "/v1/images/generations"
-      },
-    )
+    join_url(base_url, if edit { "/images/edits" } else { "/images/generations" })
   }
 }
 
@@ -282,9 +270,6 @@ impl BackendRequestLayer {
         BackendRequestLayer::ChatCompletions,
         ChatProtocol::OpenaiChatCompletions
       ) | (
-        BackendRequestLayer::ChatCompletionsNoV1,
-        ChatProtocol::OpenaiChatCompletions
-      ) | (
         BackendRequestLayer::CloudflareWorkersAi,
         ChatProtocol::OpenaiChatCompletions
       ) | (
@@ -317,9 +302,6 @@ impl BackendRequestLayer {
         BackendRequestLayer::ChatCompletions,
         StructuredProtocol::OpenaiChatCompletions
       ) | (
-        BackendRequestLayer::ChatCompletionsNoV1,
-        StructuredProtocol::OpenaiChatCompletions
-      ) | (
         BackendRequestLayer::CloudflareWorkersAi,
         StructuredProtocol::OpenaiChatCompletions
       ) | (BackendRequestLayer::Responses, StructuredProtocol::OpenaiResponses)
@@ -350,7 +332,6 @@ impl BackendRequestLayer {
     let compatible = matches!(
       (self, protocol),
       (BackendRequestLayer::ChatCompletions, EmbeddingProtocol::Openai)
-        | (BackendRequestLayer::ChatCompletionsNoV1, EmbeddingProtocol::Openai)
         | (BackendRequestLayer::CloudflareWorkersAi, EmbeddingProtocol::Openai)
         | (BackendRequestLayer::Responses, EmbeddingProtocol::Openai)
         | (BackendRequestLayer::GeminiApi, EmbeddingProtocol::Gemini)
@@ -374,10 +355,6 @@ impl BackendRequestLayer {
     let compatible = matches!(
       (self, protocol),
       (BackendRequestLayer::ChatCompletions, RerankProtocol::OpenaiChatLogprobs)
-        | (
-          BackendRequestLayer::ChatCompletionsNoV1,
-          RerankProtocol::OpenaiChatLogprobs
-        )
         | (
           BackendRequestLayer::CloudflareWorkersAi,
           RerankProtocol::CloudflareWorkersAi
@@ -423,7 +400,6 @@ impl BackendRequestLayer {
     match self {
       BackendRequestLayer::Anthropic => "anthropic",
       BackendRequestLayer::ChatCompletions => "chat_completions",
-      BackendRequestLayer::ChatCompletionsNoV1 => "chat_completions_no_v1",
       BackendRequestLayer::CloudflareWorkersAi => "cloudflare_workers_ai",
       BackendRequestLayer::GeminiApi => "gemini_api",
       BackendRequestLayer::GeminiVertex => "gemini_vertex",
@@ -439,7 +415,6 @@ impl BackendRequestLayer {
     match self {
       BackendRequestLayer::Anthropic => &ANTHROPIC_LAYER,
       BackendRequestLayer::ChatCompletions => &CHAT_COMPLETIONS_LAYER,
-      BackendRequestLayer::ChatCompletionsNoV1 => &CHAT_COMPLETIONS_NO_V1_LAYER,
       BackendRequestLayer::CloudflareWorkersAi => &CLOUDFLARE_WORKERS_AI_LAYER,
       BackendRequestLayer::GeminiApi => &GEMINI_API_LAYER,
       BackendRequestLayer::GeminiVertex => &GEMINI_VERTEX_LAYER,

@@ -192,6 +192,7 @@ mod tests {
         completion_tokens: 3,
         total_tokens: 11,
         cached_tokens: Some(1),
+        reported: true,
       },
       finish_reason: "tool_calls".to_string(),
       reasoning_details: None,

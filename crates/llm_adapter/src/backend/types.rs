@@ -58,7 +58,6 @@ pub enum ImageProtocol {
 pub enum BackendRequestLayer {
   Anthropic,
   ChatCompletions,
-  ChatCompletionsNoV1,
   CloudflareWorkersAi,
   GeminiApi,
   GeminiVertex,
@@ -199,7 +198,6 @@ impl FromStr for BackendRequestLayer {
     match normalize_protocol_name(value).as_str() {
       "anthropic" => Ok(Self::Anthropic),
       "chat_completions" => Ok(Self::ChatCompletions),
-      "chat_completions_no_v1" => Ok(Self::ChatCompletionsNoV1),
       "cloudflare_workers_ai" => Ok(Self::CloudflareWorkersAi),
       "gemini_api" => Ok(Self::GeminiApi),
       "gemini_vertex" => Ok(Self::GeminiVertex),

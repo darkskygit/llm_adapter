@@ -33,6 +33,13 @@ pub enum BackendOperation {
   Image,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OpenAiDialect {
+  Responses,
+  ChatCompletions,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BackendProtocol {
   Chat(ChatProtocol),
@@ -72,6 +79,7 @@ pub struct BackendTargetInput {
   pub provider: BackendProvider,
   pub operation: BackendOperation,
   pub endpoint: BackendEndpoint,
+  pub openai_dialect: Option<OpenAiDialect>,
   pub model: String,
   pub credential: BackendCredential,
   pub timeout_ms: Option<u64>,
@@ -129,7 +137,7 @@ pub fn canonicalize_endpoint(value: &str) -> Result<String, TargetCompileError> 
 
 fn default_endpoint(provider: BackendProvider) -> Result<&'static str, TargetCompileError> {
   match provider {
-    BackendProvider::OpenAi => Ok("https://api.openai.com"),
+    BackendProvider::OpenAi => Ok("https://api.openai.com/v1"),
     BackendProvider::Anthropic => Ok("https://api.anthropic.com/v1"),
     BackendProvider::Gemini => Ok("https://generativelanguage.googleapis.com/v1beta"),
     BackendProvider::Fal => Ok("https://fal.run"),
@@ -137,21 +145,6 @@ fn default_endpoint(provider: BackendProvider) -> Result<&'static str, TargetCom
     BackendProvider::GeminiVertex | BackendProvider::AnthropicVertex | BackendProvider::CloudflareWorkersAi => {
       Err(TargetCompileError::EndpointRequired)
     }
-  }
-}
-
-fn default_request_layer(provider: BackendProvider, operation: BackendOperation) -> BackendRequestLayer {
-  match (provider, operation) {
-    (BackendProvider::OpenAi, BackendOperation::Rerank) => BackendRequestLayer::ChatCompletions,
-    (BackendProvider::OpenAi, BackendOperation::Image) => BackendRequestLayer::OpenaiImages,
-    (BackendProvider::OpenAi, _) => BackendRequestLayer::Responses,
-    (BackendProvider::Anthropic, _) => BackendRequestLayer::Anthropic,
-    (BackendProvider::Gemini, _) => BackendRequestLayer::GeminiApi,
-    (BackendProvider::GeminiVertex, _) => BackendRequestLayer::GeminiVertex,
-    (BackendProvider::AnthropicVertex, _) => BackendRequestLayer::VertexAnthropic,
-    (BackendProvider::CloudflareWorkersAi, _) => BackendRequestLayer::CloudflareWorkersAi,
-    (BackendProvider::Fal, _) => BackendRequestLayer::Fal,
-    (BackendProvider::Perplexity, _) => BackendRequestLayer::PerplexitySonar,
   }
 }
 
@@ -163,18 +156,35 @@ pub fn compile_backend_target(input: BackendTargetInput) -> Result<CompiledBacke
   if model.len() > 512 {
     return Err(TargetCompileError::ModelTooLong);
   }
+  let (protocol, request_layer) = if input.provider == BackendProvider::OpenAi {
+    if matches!(&input.endpoint, BackendEndpoint::Custom(_)) && input.openai_dialect.is_none() {
+      return Err(TargetCompileError::InvalidConfig(
+        "OpenAI custom endpoint requires a dialect".to_string(),
+      ));
+    }
+    compile_openai_binding(
+      input.operation,
+      input.openai_dialect.unwrap_or(OpenAiDialect::Responses),
+    )?
+  } else {
+    if input.openai_dialect.is_some() {
+      return Err(TargetCompileError::InvalidConfig(
+        "OpenAI dialect is only valid for the OpenAI provider".to_string(),
+      ));
+    }
+    compile_provider_binding(input.provider, input.operation)?
+  };
   let base_url = match input.endpoint {
     BackendEndpoint::ProviderDefault => default_endpoint(input.provider)?.to_string(),
     BackendEndpoint::Custom(value) => canonicalize_endpoint(&value)?,
   };
-  let protocol = default_protocol(input.provider, input.operation)?;
   Ok(CompiledBackendTarget {
     model,
     protocol,
     config: BackendConfig {
       base_url,
       auth_token: input.credential.expose().into(),
-      request_layer: Some(default_request_layer(input.provider, input.operation)),
+      request_layer: Some(request_layer),
       headers: Default::default(),
       no_streaming: false,
       timeout_ms: input.timeout_ms,
@@ -183,44 +193,103 @@ pub fn compile_backend_target(input: BackendTargetInput) -> Result<CompiledBacke
   })
 }
 
-fn default_protocol(
+fn compile_openai_binding(
+  operation: BackendOperation,
+  dialect: OpenAiDialect,
+) -> Result<(BackendProtocol, BackendRequestLayer), TargetCompileError> {
+  let binding = match (operation, dialect) {
+    (BackendOperation::Chat, OpenAiDialect::Responses) => (
+      BackendProtocol::Chat(ChatProtocol::OpenaiResponses),
+      BackendRequestLayer::Responses,
+    ),
+    (BackendOperation::Chat, OpenAiDialect::ChatCompletions) => (
+      BackendProtocol::Chat(ChatProtocol::OpenaiChatCompletions),
+      BackendRequestLayer::ChatCompletions,
+    ),
+    (BackendOperation::Structured, OpenAiDialect::Responses) => (
+      BackendProtocol::Structured(StructuredProtocol::OpenaiResponses),
+      BackendRequestLayer::Responses,
+    ),
+    (BackendOperation::Structured, OpenAiDialect::ChatCompletions) => (
+      BackendProtocol::Structured(StructuredProtocol::OpenaiChatCompletions),
+      BackendRequestLayer::ChatCompletions,
+    ),
+    (BackendOperation::Embedding, _) => (
+      BackendProtocol::Embedding(EmbeddingProtocol::Openai),
+      BackendRequestLayer::Responses,
+    ),
+    (BackendOperation::Rerank, _) => (
+      BackendProtocol::Rerank(RerankProtocol::OpenaiChatLogprobs),
+      BackendRequestLayer::ChatCompletions,
+    ),
+    (BackendOperation::Image, _) => (
+      BackendProtocol::Image(ImageProtocol::OpenaiImages),
+      BackendRequestLayer::OpenaiImages,
+    ),
+  };
+  Ok(binding)
+}
+
+fn compile_provider_binding(
   provider: BackendProvider,
   operation: BackendOperation,
-) -> Result<BackendProtocol, TargetCompileError> {
-  let protocol = match (provider, operation) {
-    (BackendProvider::OpenAi, BackendOperation::Chat) => BackendProtocol::Chat(ChatProtocol::OpenaiResponses),
-    (BackendProvider::OpenAi, BackendOperation::Structured) => {
-      BackendProtocol::Structured(StructuredProtocol::OpenaiResponses)
-    }
-    (BackendProvider::OpenAi, BackendOperation::Embedding) => BackendProtocol::Embedding(EmbeddingProtocol::Openai),
-    (BackendProvider::OpenAi, BackendOperation::Rerank) => BackendProtocol::Rerank(RerankProtocol::OpenaiChatLogprobs),
-    (BackendProvider::OpenAi, BackendOperation::Image) => BackendProtocol::Image(ImageProtocol::OpenaiImages),
-    (BackendProvider::Anthropic | BackendProvider::AnthropicVertex, BackendOperation::Chat) => {
-      BackendProtocol::Chat(ChatProtocol::AnthropicMessages)
-    }
-    (BackendProvider::Gemini | BackendProvider::GeminiVertex, BackendOperation::Chat) => {
-      BackendProtocol::Chat(ChatProtocol::GeminiGenerateContent)
-    }
-    (BackendProvider::Gemini | BackendProvider::GeminiVertex, BackendOperation::Structured) => {
-      BackendProtocol::Structured(StructuredProtocol::GeminiGenerateContent)
-    }
-    (BackendProvider::Gemini | BackendProvider::GeminiVertex, BackendOperation::Embedding) => {
-      BackendProtocol::Embedding(EmbeddingProtocol::Gemini)
-    }
-    (BackendProvider::Gemini | BackendProvider::GeminiVertex, BackendOperation::Image) => {
-      BackendProtocol::Image(ImageProtocol::GeminiGenerateContent)
-    }
-    (BackendProvider::CloudflareWorkersAi, BackendOperation::Rerank) => {
-      BackendProtocol::Rerank(RerankProtocol::CloudflareWorkersAi)
-    }
-    (BackendProvider::Fal, BackendOperation::Image) => BackendProtocol::Image(ImageProtocol::FalImage),
+) -> Result<(BackendProtocol, BackendRequestLayer), TargetCompileError> {
+  let binding = match (provider, operation) {
+    (BackendProvider::Anthropic, BackendOperation::Chat) => (
+      BackendProtocol::Chat(ChatProtocol::AnthropicMessages),
+      BackendRequestLayer::Anthropic,
+    ),
+    (BackendProvider::AnthropicVertex, BackendOperation::Chat) => (
+      BackendProtocol::Chat(ChatProtocol::AnthropicMessages),
+      BackendRequestLayer::VertexAnthropic,
+    ),
+    (BackendProvider::Gemini, BackendOperation::Chat) => (
+      BackendProtocol::Chat(ChatProtocol::GeminiGenerateContent),
+      BackendRequestLayer::GeminiApi,
+    ),
+    (BackendProvider::GeminiVertex, BackendOperation::Chat) => (
+      BackendProtocol::Chat(ChatProtocol::GeminiGenerateContent),
+      BackendRequestLayer::GeminiVertex,
+    ),
+    (BackendProvider::Gemini, BackendOperation::Structured) => (
+      BackendProtocol::Structured(StructuredProtocol::GeminiGenerateContent),
+      BackendRequestLayer::GeminiApi,
+    ),
+    (BackendProvider::GeminiVertex, BackendOperation::Structured) => (
+      BackendProtocol::Structured(StructuredProtocol::GeminiGenerateContent),
+      BackendRequestLayer::GeminiVertex,
+    ),
+    (BackendProvider::Gemini, BackendOperation::Embedding) => (
+      BackendProtocol::Embedding(EmbeddingProtocol::Gemini),
+      BackendRequestLayer::GeminiApi,
+    ),
+    (BackendProvider::GeminiVertex, BackendOperation::Embedding) => (
+      BackendProtocol::Embedding(EmbeddingProtocol::Gemini),
+      BackendRequestLayer::GeminiVertex,
+    ),
+    (BackendProvider::Gemini, BackendOperation::Image) => (
+      BackendProtocol::Image(ImageProtocol::GeminiGenerateContent),
+      BackendRequestLayer::GeminiApi,
+    ),
+    (BackendProvider::GeminiVertex, BackendOperation::Image) => (
+      BackendProtocol::Image(ImageProtocol::GeminiGenerateContent),
+      BackendRequestLayer::GeminiVertex,
+    ),
+    (BackendProvider::CloudflareWorkersAi, BackendOperation::Rerank) => (
+      BackendProtocol::Rerank(RerankProtocol::CloudflareWorkersAi),
+      BackendRequestLayer::CloudflareWorkersAi,
+    ),
+    (BackendProvider::Fal, BackendOperation::Image) => (
+      BackendProtocol::Image(ImageProtocol::FalImage),
+      BackendRequestLayer::Fal,
+    ),
     _ => {
       return Err(TargetCompileError::InvalidConfig(
         "provider does not support operation".to_string(),
       ));
     }
   };
-  Ok(protocol)
+  Ok(binding)
 }
 
 impl EgressPolicy {
@@ -278,6 +347,7 @@ mod tests {
       provider: BackendProvider::OpenAi,
       operation: BackendOperation::Chat,
       endpoint: BackendEndpoint::Custom("https://example.com/v1/?token=discarded#fragment".to_string()),
+      openai_dialect: Some(OpenAiDialect::Responses),
       model: " vendor/model:latest ".to_string(),
       credential: BackendCredential::new("secret".to_string()),
       timeout_ms: None,
@@ -289,7 +359,7 @@ mod tests {
   }
 
   #[test]
-  fn openai_provider_default_leaves_versioning_to_request_layers() {
+  fn openai_provider_default_is_a_versioned_api_base() {
     for operation in [
       BackendOperation::Chat,
       BackendOperation::Structured,
@@ -301,14 +371,113 @@ mod tests {
         provider: BackendProvider::OpenAi,
         operation,
         endpoint: BackendEndpoint::ProviderDefault,
+        openai_dialect: None,
         model: "gpt-5.6-luna".to_string(),
         credential: BackendCredential::new("secret".to_string()),
         timeout_ms: None,
         egress_policy: EgressPolicy::PublicOnly,
       })
       .unwrap();
-      assert_eq!(target.config.base_url, "https://api.openai.com");
+      assert_eq!(target.config.base_url, "https://api.openai.com/v1");
     }
+  }
+
+  #[test]
+  fn compiles_openai_dialect_as_an_atomic_protocol_and_request_layer() {
+    let cases = [
+      (
+        BackendOperation::Chat,
+        OpenAiDialect::Responses,
+        BackendProtocol::Chat(ChatProtocol::OpenaiResponses),
+        BackendRequestLayer::Responses,
+      ),
+      (
+        BackendOperation::Chat,
+        OpenAiDialect::ChatCompletions,
+        BackendProtocol::Chat(ChatProtocol::OpenaiChatCompletions),
+        BackendRequestLayer::ChatCompletions,
+      ),
+      (
+        BackendOperation::Structured,
+        OpenAiDialect::Responses,
+        BackendProtocol::Structured(StructuredProtocol::OpenaiResponses),
+        BackendRequestLayer::Responses,
+      ),
+      (
+        BackendOperation::Structured,
+        OpenAiDialect::ChatCompletions,
+        BackendProtocol::Structured(StructuredProtocol::OpenaiChatCompletions),
+        BackendRequestLayer::ChatCompletions,
+      ),
+      (
+        BackendOperation::Embedding,
+        OpenAiDialect::ChatCompletions,
+        BackendProtocol::Embedding(EmbeddingProtocol::Openai),
+        BackendRequestLayer::Responses,
+      ),
+      (
+        BackendOperation::Rerank,
+        OpenAiDialect::Responses,
+        BackendProtocol::Rerank(RerankProtocol::OpenaiChatLogprobs),
+        BackendRequestLayer::ChatCompletions,
+      ),
+      (
+        BackendOperation::Image,
+        OpenAiDialect::Responses,
+        BackendProtocol::Image(ImageProtocol::OpenaiImages),
+        BackendRequestLayer::OpenaiImages,
+      ),
+    ];
+
+    for (operation, dialect, protocol, request_layer) in cases {
+      let target = compile_backend_target(BackendTargetInput {
+        provider: BackendProvider::OpenAi,
+        operation,
+        endpoint: BackendEndpoint::Custom("https://example.com/nested/api/v1".to_string()),
+        openai_dialect: Some(dialect),
+        model: "model".to_string(),
+        credential: BackendCredential::new("secret".to_string()),
+        timeout_ms: None,
+        egress_policy: EgressPolicy::PublicOnly,
+      })
+      .unwrap();
+
+      assert_eq!(target.protocol, protocol);
+      assert_eq!(target.config.request_layer, Some(request_layer));
+      assert_eq!(target.config.base_url, "https://example.com/nested/api/v1");
+    }
+  }
+
+  #[test]
+  fn rejects_invalid_openai_dialect_placement() {
+    let invalid = [
+      BackendTargetInput {
+        provider: BackendProvider::Anthropic,
+        operation: BackendOperation::Chat,
+        endpoint: BackendEndpoint::ProviderDefault,
+        openai_dialect: Some(OpenAiDialect::Responses),
+        model: "model".to_string(),
+        credential: BackendCredential::new("secret".to_string()),
+        timeout_ms: None,
+        egress_policy: EgressPolicy::PublicOnly,
+      },
+      BackendTargetInput {
+        provider: BackendProvider::OpenAi,
+        operation: BackendOperation::Chat,
+        endpoint: BackendEndpoint::Custom("https://example.com/v1".to_string()),
+        openai_dialect: None,
+        model: "model".to_string(),
+        credential: BackendCredential::new("secret".to_string()),
+        timeout_ms: None,
+        egress_policy: EgressPolicy::PublicOnly,
+      },
+    ];
+
+    assert!(
+      invalid
+        .into_iter()
+        .all(|input| matches!(compile_backend_target(input), Err(TargetCompileError::InvalidConfig(_))))
+    );
   }
 
   #[test]

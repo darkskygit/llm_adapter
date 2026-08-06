@@ -180,9 +180,10 @@ pub fn validate_capability_upper_bound(
 }
 
 pub fn provider_default_capability_upper_bound(provider: &str, model_id: &str) -> Option<Vec<DeclaredModelCapability>> {
+  let backend = canonical_provider_default_backend(provider)?;
   let variant = crate::core::default_model_registry_variants()
     .into_iter()
-    .find(|variant| provider_matches_backend(provider, &variant.backend_kind) && variant.raw_model_id == model_id)?;
+    .find(|variant| variant.backend_kind == backend && variant.raw_model_id == model_id)?;
   Some(
     variant
       .capabilities
@@ -269,16 +270,16 @@ pub fn provider_default_capability_upper_bound(provider: &str, model_id: &str) -
   )
 }
 
-fn provider_matches_backend(provider: &str, backend: &str) -> bool {
+fn canonical_provider_default_backend(provider: &str) -> Option<&'static str> {
   match provider {
-    "openai" => matches!(backend, "openai_chat" | "openai_responses"),
-    "anthropic" => backend == "anthropic",
-    "anthropicVertex" => backend == "anthropic_vertex",
-    "gemini" => backend == "gemini_api",
-    "geminiVertex" => backend == "gemini_vertex",
-    "cloudflareWorkersAi" => backend == "cloudflare_workers_ai",
-    "fal" => backend == "fal",
-    _ => false,
+    "openai" => Some("openai_responses"),
+    "anthropic" => Some("anthropic"),
+    "anthropicVertex" => Some("anthropic_vertex"),
+    "gemini" => Some("gemini_api"),
+    "geminiVertex" => Some("gemini_vertex"),
+    "cloudflareWorkersAi" => Some("cloudflare_workers_ai"),
+    "fal" => Some("fal"),
+    _ => None,
   }
 }
 
@@ -335,6 +336,7 @@ mod tests {
 
   #[test]
   fn projects_provider_default_registry_as_declared_upper_bound() {
+    assert_eq!(canonical_provider_default_backend("openai"), Some("openai_responses"));
     let upper = provider_default_capability_upper_bound("openai", "gpt-5-mini").unwrap();
     assert!(
       upper

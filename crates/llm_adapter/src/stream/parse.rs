@@ -403,11 +403,16 @@ impl OpenaiResponsesStreamParser {
       .or_else(|| get_str(&json, "type"))
       .unwrap_or_default();
 
+    let response = if matches!(event_name, "response.created" | "response.completed") {
+      json.get("response").unwrap_or(&Value::Null)
+    } else {
+      &json
+    };
     if self.stream_id.is_none() {
-      self.stream_id = get_str(&json, "id").map(ToString::to_string);
+      self.stream_id = get_str(response, "id").map(ToString::to_string);
     }
     if self.stream_model.is_none() {
-      self.stream_model = get_str(&json, "model").map(ToString::to_string);
+      self.stream_model = get_str(response, "model").map(ToString::to_string);
     }
 
     if !self.started && (self.stream_id.is_some() || self.stream_model.is_some() || event_name == "response.created") {
@@ -535,13 +540,28 @@ impl OpenaiResponsesStreamParser {
         events.push(parse_stream_error(json));
       }
       "response.completed" => {
-        self.status = get_str(json, "status")
+        let response = json.get("response").unwrap_or(&Value::Null);
+        self.stream_id = get_str(response, "id")
+          .map(ToString::to_string)
+          .or_else(|| self.stream_id.clone());
+        self.stream_model = get_str(response, "model")
+          .map(ToString::to_string)
+          .or_else(|| self.stream_model.clone());
+        self.status = get_str(response, "status")
           .map(ToString::to_string)
           .or_else(|| self.status.clone());
-        self.finish_reason = get_str(json, "finish_reason")
+        self.finish_reason = get_str(response, "finish_reason")
+          .or_else(|| {
+            response
+              .get("incomplete_details")
+              .and_then(|details| get_str(details, "reason"))
+          })
           .map(ToString::to_string)
           .or_else(|| self.finish_reason.clone());
-        if let Some(parsed_usage) = json.get("usage").map(|usage| usage_from_responses(Some(usage), 0, 0)) {
+        if let Some(parsed_usage) = response
+          .get("usage")
+          .map(|usage| usage_from_responses(Some(usage), 0, 0))
+        {
           self.usage = Some(parsed_usage);
         }
       }

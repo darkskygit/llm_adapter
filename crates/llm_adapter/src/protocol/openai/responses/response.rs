@@ -248,6 +248,7 @@ mod tests {
         completion_tokens: 4,
         total_tokens: 14,
         cached_tokens: None,
+        reported: true,
       },
       finish_reason: "stop".to_string(),
       reasoning_details: None,

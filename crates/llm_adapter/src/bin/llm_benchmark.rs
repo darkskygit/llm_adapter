@@ -490,7 +490,7 @@ impl Default for BenchmarkConfig {
     providers.insert(
       "ollama".to_string(),
       ProviderConfig::Ollama {
-        base_url: "http://localhost:11434".to_string(),
+        base_url: "http://localhost:11434/v1".to_string(),
         auth_token: None,
         auth_token_env: None,
         protocol: Some(ChatProtocol::OpenaiChatCompletions),
@@ -501,7 +501,7 @@ impl Default for BenchmarkConfig {
     providers.insert(
       "llama_server".to_string(),
       ProviderConfig::LlamaServer {
-        base_url: "http://localhost:8080".to_string(),
+        base_url: "http://localhost:8080/v1".to_string(),
         auth_token: None,
         auth_token_env: None,
         protocol: Some(ChatProtocol::OpenaiChatCompletions),
@@ -512,7 +512,7 @@ impl Default for BenchmarkConfig {
     providers.insert(
       "lmstudio".to_string(),
       ProviderConfig::Lmstudio {
-        base_url: "http://localhost:1234".to_string(),
+        base_url: "http://localhost:1234/v1".to_string(),
         auth_token: None,
         auth_token_env: None,
         protocol: Some(ChatProtocol::OpenaiChatCompletions),

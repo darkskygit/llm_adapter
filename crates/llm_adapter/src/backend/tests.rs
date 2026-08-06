@@ -81,13 +81,9 @@ fn should_dispatch_openai_chat_request() {
     }),
   }))]);
 
-  let response = dispatch_request(
-    &client,
-    &sample_backend_config_with_header(false),
-    ChatProtocol::OpenaiChatCompletions,
-    &sample_request(),
-  )
-  .unwrap();
+  let mut config = sample_backend_config_with_header(false);
+  config.base_url = "https://api.example.com/v1".to_string();
+  let response = dispatch_request(&client, &config, ChatProtocol::OpenaiChatCompletions, &sample_request()).unwrap();
 
   assert_eq!(response.id, "chat_1");
 
@@ -168,7 +164,7 @@ fn should_dispatch_openai_image_generate_request() {
   assert_eq!(response.images[0].media_type, "image/webp");
   assert_eq!(response.usage.unwrap().total_tokens, Some(8));
   let requests = client.requests();
-  assert_eq!(requests[0].url, "https://api.example.com/v1/images/generations");
+  assert_eq!(requests[0].url, "https://api.example.com/images/generations");
   assert_eq!(requests[0].body["model"], "gpt-image-1");
   assert_eq!(requests[0].body["quality"], "high");
   assert_eq!(requests[0].body["output_format"], "webp");
@@ -205,7 +201,7 @@ fn should_dispatch_openai_image_edit_as_multipart() {
   .unwrap();
 
   let requests = client.requests();
-  assert_eq!(requests[0].url, "https://api.example.com/v1/images/edits");
+  assert_eq!(requests[0].url, "https://api.example.com/images/edits");
   assert!(matches!(
     &requests[0].body,
     HttpBody::Multipart(parts)
@@ -614,7 +610,7 @@ fn should_dispatch_openai_structured_request() {
   assert_eq!(response.output_json, Some(json!({ "summary": "Example" })));
   let requests = client.requests();
   assert_eq!(requests.len(), 1);
-  assert_eq!(requests[0].url, "https://api.example.com/v1/responses");
+  assert_eq!(requests[0].url, "https://api.example.com/responses");
   assert_eq!(requests[0].body["text"]["format"]["type"], "json_schema");
   assert_eq!(requests[0].body["text"]["format"]["schema"], request.schema);
 }
@@ -886,7 +882,7 @@ fn should_dispatch_openai_rerank_request() {
 
   let requests = client.requests();
   assert_eq!(requests.len(), 2);
-  assert_eq!(requests[0].url, "https://api.example.com/v1/chat/completions");
+  assert_eq!(requests[0].url, "https://api.example.com/chat/completions");
   assert_eq!(requests[0].body["logprobs"], true);
   assert_eq!(requests[0].body["top_logprobs"], 5);
   assert_eq!(requests[0].body["max_completion_tokens"], 16);
@@ -1085,8 +1081,11 @@ fn should_dispatch_openai_responses_stream() {
         "response.created",
         json!({
           "type": "response.created",
-          "id": "resp_1",
-          "model": "gpt-4.1",
+          "response": {
+            "id": "resp_1",
+            "model": "gpt-4.1",
+            "status": "in_progress",
+          },
         }),
       ),
       sse_event(
@@ -1130,12 +1129,16 @@ fn should_dispatch_openai_responses_stream() {
         "response.completed",
         json!({
           "type": "response.completed",
-          "status": "requires_action",
-          "finish_reason": "tool_calls",
-          "usage": {
-            "input_tokens": 10,
-            "output_tokens": 5,
-            "total_tokens": 15,
+          "response": {
+            "id": "resp_1",
+            "model": "gpt-4.1",
+            "status": "requires_action",
+            "finish_reason": "tool_calls",
+            "usage": {
+              "input_tokens": 10,
+              "output_tokens": 5,
+              "total_tokens": 15,
+            },
           },
         }),
       ),
@@ -1144,13 +1147,9 @@ fn should_dispatch_openai_responses_stream() {
     .concat(),
   }))]);
 
-  let events = collect_stream_events(
-    &client,
-    &sample_backend_config_with_header(false),
-    ChatProtocol::OpenaiResponses,
-    &sample_request(),
-  )
-  .unwrap();
+  let mut config = sample_backend_config_with_header(false);
+  config.base_url = "https://api.example.com/nested/api/v1".to_string();
+  let events = collect_stream_events(&client, &config, ChatProtocol::OpenaiResponses, &sample_request()).unwrap();
 
   assert!(!events.is_empty());
   assert_eq!(
@@ -1172,7 +1171,7 @@ fn should_dispatch_openai_responses_stream() {
 
   let requests = client.requests();
   assert_eq!(requests.len(), 1);
-  assert_eq!(requests[0].url, "https://api.example.com/v1/responses");
+  assert_eq!(requests[0].url, "https://api.example.com/nested/api/v1/responses");
   assert_eq!(requests[0].body["stream"], Value::Bool(true));
 }
 
@@ -1185,8 +1184,11 @@ fn should_dispatch_stream_events_with_incrementally() {
         "response.created",
         json!({
           "type": "response.created",
-          "id": "resp_2",
-          "model": "gpt-4.1",
+          "response": {
+            "id": "resp_2",
+            "model": "gpt-4.1",
+            "status": "in_progress",
+          },
         }),
       ),
       sse_event(

@@ -75,6 +75,7 @@ mod tests {
         completion_tokens: 20,
         total_tokens: 120,
         cached_tokens: Some(12),
+        reported: true,
       }),
     };
 

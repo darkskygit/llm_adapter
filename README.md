@@ -33,7 +33,7 @@ Protocol selection is ability-specific:
 
 Endpoint shapes for:
 
-- OpenAI Chat Completions / Responses (`BackendRequestLayer::ChatCompletions`/`BackendRequestLayer::ChatCompletionsNoV1` / `BackendRequestLayer::CloudflareWorkersAi` / `BackendRequestLayer::Responses`)
+- OpenAI Chat Completions / Responses (`BackendRequestLayer::ChatCompletions` / `BackendRequestLayer::CloudflareWorkersAi` / `BackendRequestLayer::Responses`)
 - OpenAI Images (`BackendRequestLayer::OpenaiImages`)
 - Google Gemini (`BackendRequestLayer::GeminiApi`/`BackendRequestLayer::GeminiVertex`)
 - Anthropic (`BackendRequestLayer::Anthropic`/`BackendRequestLayer::VertexAnthropic`)
@@ -62,7 +62,7 @@ fn main() -> Result<(), llm_adapter::backend::BackendError> {
   let client = ReqwestHttpClient::default();
 
   let config = BackendConfig {
-    base_url: "https://api.openai.com".to_string(),
+    base_url: "https://api.openai.com/v1".to_string(),
     auth_token: std::env::var("OPENAI_API_KEY").expect("OPENAI_API_KEY is required"),
     request_layer: None,
     headers: BTreeMap::new(),
@@ -137,7 +137,7 @@ use llm_adapter::{
 fn main() -> Result<(), llm_adapter::backend::BackendError> {
   let client = ReqwestHttpClient::default();
   let config = BackendConfig {
-    base_url: "https://api.openai.com".to_string(),
+    base_url: "https://api.openai.com/v1".to_string(),
     auth_token: std::env::var("OPENAI_API_KEY").expect("OPENAI_API_KEY is required"),
     request_layer: Some(BackendRequestLayer::OpenaiImages),
     headers: BTreeMap::new(),

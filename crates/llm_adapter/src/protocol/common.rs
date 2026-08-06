@@ -171,6 +171,7 @@ pub(crate) fn attachment_source(content: &CoreContent) -> Option<(&Value, CoreAt
 }
 
 pub(crate) fn usage_from_openai(usage: Option<&Value>, prompt_estimate: u32, completion_estimate: u32) -> CoreUsage {
+  let reported = usage.is_some_and(|usage| !usage.is_null());
   let usage = usage.unwrap_or(&Value::Null);
   let prompt_tokens = get_u32_or(usage, "prompt_tokens", prompt_estimate);
   let completion_tokens = get_u32_or(usage, "completion_tokens", completion_estimate);
@@ -182,6 +183,7 @@ pub(crate) fn usage_from_openai(usage: Option<&Value>, prompt_estimate: u32, com
     completion_tokens,
     total_tokens,
     cached_tokens,
+    reported,
   }
 }
 
@@ -206,6 +208,7 @@ pub(crate) fn map_responses_finish_reason(status: Option<&str>, finish_reason: O
 }
 
 pub(crate) fn usage_from_responses(usage: Option<&Value>, prompt_estimate: u32, completion_estimate: u32) -> CoreUsage {
+  let reported = usage.is_some_and(|usage| !usage.is_null());
   let usage = usage.unwrap_or(&Value::Null);
   let prompt_tokens = get_u32_or(usage, "input_tokens", prompt_estimate);
   let completion_tokens = get_u32_or(usage, "output_tokens", completion_estimate);
@@ -217,10 +220,12 @@ pub(crate) fn usage_from_responses(usage: Option<&Value>, prompt_estimate: u32, 
     completion_tokens,
     total_tokens,
     cached_tokens,
+    reported,
   }
 }
 
 pub(crate) fn usage_from_anthropic(usage: Option<&Value>, prompt_estimate: u32, completion_estimate: u32) -> CoreUsage {
+  let reported = usage.is_some_and(|usage| !usage.is_null());
   let usage = usage.unwrap_or(&Value::Null);
   let input_tokens = get_u32_or(usage, "input_tokens", prompt_estimate);
   let output_tokens = get_u32_or(usage, "output_tokens", completion_estimate);
@@ -241,6 +246,7 @@ pub(crate) fn usage_from_anthropic(usage: Option<&Value>, prompt_estimate: u32, 
     } else {
       None
     },
+    reported,
   }
 }
 
@@ -264,6 +270,7 @@ pub(crate) fn map_gemini_finish_reason(reason: &str) -> String {
 }
 
 pub(crate) fn usage_from_gemini(usage: Option<&Value>, prompt_estimate: u32, completion_estimate: u32) -> CoreUsage {
+  let reported = usage.is_some_and(|usage| !usage.is_null());
   let usage = usage.unwrap_or(&Value::Null);
   let prompt_tokens = get_u32_or(usage, "promptTokenCount", prompt_estimate);
   let completion_tokens = get_u32_or(usage, "candidatesTokenCount", completion_estimate);
@@ -275,6 +282,7 @@ pub(crate) fn usage_from_gemini(usage: Option<&Value>, prompt_estimate: u32, com
     completion_tokens,
     total_tokens,
     cached_tokens: (cached_tokens > 0).then_some(cached_tokens),
+    reported,
   }
 }
 

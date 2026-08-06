@@ -404,7 +404,7 @@ mod tests {
     assert!(tool_delta < completed);
 
     let completed_payload: Value = serde_json::from_str(&frames[completed].data).unwrap();
-    assert_eq!(completed_payload["finish_reason"], "tool_calls");
+    assert_eq!(completed_payload["response"]["finish_reason"], "tool_calls");
 
     let reparsed = parse_openai_responses_stream(&encoded).unwrap();
     assert!(reparsed.iter().any(

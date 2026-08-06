@@ -776,7 +776,7 @@ mod tests {
         .unwrap()
         .unwrap();
 
-    assert_eq!(deepseek.request_layer.as_deref(), Some("chat_completions_no_v1"));
+    assert_eq!(deepseek.request_layer.as_deref(), Some("chat_completions"));
     assert_eq!(matched_by, "legacy_alias");
     assert_eq!(deepseek_legacy.raw_model_id, "deepseek-v4-flash");
     assert_eq!(kimi.request_layer.as_deref(), Some("chat_completions"));

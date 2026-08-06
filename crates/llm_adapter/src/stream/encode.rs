@@ -437,14 +437,16 @@ impl OpenaiResponsesStreamEncoder {
           Some("response.completed"),
           json!({
             "type": "response.completed",
-            "id": self.stream_id_or_default(),
-            "object": "response.completed",
-            "created_at": 0,
-            "model": self.stream_model_or_default(),
-            "status": if finish_reason.as_deref() == Some("tool_calls") { "requires_action" } else { "completed" },
-            "finish_reason": finish_reason.clone().unwrap_or_else(|| "stop".to_string()),
-            "usage": self.usage,
             "sequence_number": self.sequence_number,
+            "response": {
+              "id": self.stream_id_or_default(),
+              "object": "response",
+              "created_at": 0,
+              "model": self.stream_model_or_default(),
+              "status": if finish_reason.as_deref() == Some("tool_calls") { "requires_action" } else { "completed" },
+              "finish_reason": finish_reason.clone().unwrap_or_else(|| "stop".to_string()),
+              "usage": self.usage,
+            },
           }),
         ));
         frames.push(done_frame());
@@ -465,14 +467,16 @@ impl OpenaiResponsesStreamEncoder {
       Some("response.completed"),
       json!({
         "type": "response.completed",
-        "id": self.stream_id_or_default(),
-        "object": "response.completed",
-        "created_at": 0,
-        "model": self.stream_model_or_default(),
-        "status": "completed",
-        "finish_reason": "stop",
-        "usage": self.usage,
         "sequence_number": self.sequence_number,
+        "response": {
+          "id": self.stream_id_or_default(),
+          "object": "response",
+          "created_at": 0,
+          "model": self.stream_model_or_default(),
+          "status": "completed",
+          "finish_reason": "stop",
+          "usage": self.usage,
+        },
       }),
     ));
     frames.push(done_frame());
@@ -489,11 +493,14 @@ impl OpenaiResponsesStreamEncoder {
       Some("response.created"),
       json!({
         "type": "response.created",
-        "id": self.stream_id_or_default(),
-        "object": "response",
-        "created_at": 0,
-        "model": self.stream_model_or_default(),
         "sequence_number": self.sequence_number,
+        "response": {
+          "id": self.stream_id_or_default(),
+          "object": "response",
+          "created_at": 0,
+          "model": self.stream_model_or_default(),
+          "status": "in_progress",
+        },
       }),
     )]
   }

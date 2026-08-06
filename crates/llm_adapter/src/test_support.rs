@@ -91,6 +91,7 @@ pub(crate) fn sample_response_with_reasoning_tool_call() -> CoreResponse {
       completion_tokens: 20,
       total_tokens: 120,
       cached_tokens: Some(12),
+      reported: true,
     },
     finish_reason: "tool_calls".to_string(),
     reasoning_details: Some(json!({ "effort": "medium" })),
