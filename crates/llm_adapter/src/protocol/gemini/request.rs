@@ -116,17 +116,21 @@ fn is_gemini_3_flash_family(model: &str) -> bool {
   is_gemini_3_model(model) && model.contains("flash")
 }
 
+fn supports_minimal_thinking_level(model: &str) -> bool {
+  is_gemini_3_flash_family(model) && model != "gemini-3.7-flash"
+}
+
 fn supports_sampling_parameters(model: &str) -> bool {
-  !matches!(model, "gemini-3.6-flash" | "gemini-3.5-flash-lite")
+  !matches!(model, "gemini-3.7-flash" | "gemini-3.6-flash" | "gemini-3.5-flash-lite")
 }
 
 fn normalize_gemini_3_thinking_level(model: &str, level: &str) -> &'static str {
   match level.to_ascii_lowercase().as_str() {
-    "minimal" if is_gemini_3_flash_family(model) => "minimal",
+    "minimal" if supports_minimal_thinking_level(model) => "minimal",
     "medium" if is_gemini_3_flash_family(model) => "medium",
     "low" | "minimal" | "medium" => "low",
     "high" => "high",
-    _ if is_gemini_3_flash_family(model) => "minimal",
+    _ if supports_minimal_thinking_level(model) => "minimal",
     _ => "low",
   }
 }
@@ -1005,8 +1009,36 @@ mod tests {
   }
 
   #[test]
+  fn encode_should_upgrade_minimal_thinking_level_for_gemini_3_7_flash() {
+    let payload = encode(
+      &CoreRequest {
+        model: "gemini-3.7-flash".to_string(),
+        messages: vec![CoreMessage {
+          role: CoreRole::User,
+          content: vec![CoreContent::Text {
+            text: "Rank this candidate.".to_string(),
+          }],
+        }],
+        stream: false,
+        max_tokens: Some(64),
+        temperature: None,
+        tools: vec![],
+        tool_choice: None,
+        include: None,
+        reasoning: Some(json!({ "level": "minimal" })),
+        response_schema: None,
+      },
+      false,
+      BackendRequestLayer::GeminiApi,
+      "https://generativelanguage.googleapis.com/v1beta",
+    );
+
+    assert_eq!(payload["generationConfig"]["thinkingConfig"]["thinkingLevel"], "low");
+  }
+
+  #[test]
   fn encode_should_omit_deprecated_sampling_parameters_for_latest_flash_models() {
-    for model in ["gemini-3.6-flash", "gemini-3.5-flash-lite"] {
+    for model in ["gemini-3.7-flash", "gemini-3.6-flash", "gemini-3.5-flash-lite"] {
       let payload = encode(
         &CoreRequest {
           model: model.to_string(),

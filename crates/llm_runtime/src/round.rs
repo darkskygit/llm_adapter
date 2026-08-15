@@ -1,4 +1,5 @@
 use llm_adapter::{core::StreamEvent, middleware::StreamPipeline};
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::{AccumulatedToolCall, ToolLoopEvent, tool_call::ToolCallAccumulator};
@@ -9,7 +10,7 @@ pub enum RoundProcessorError {
   StreamError { message: String },
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RoundOutcome {
   pub tool_calls: Vec<AccumulatedToolCall>,
   pub final_done: Option<ToolLoopEvent>,

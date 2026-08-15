@@ -345,7 +345,7 @@ impl ProviderConfig {
         Ok(ResolvedProvider {
           name: provider_name.to_string(),
           protocol,
-          backend: BackendConfig {
+          backend: Arc::new(BackendConfig {
             base_url: base_url.clone(),
             auth_token: auth_token.into(),
             request_layer: *request_layer,
@@ -353,7 +353,7 @@ impl ProviderConfig {
             no_streaming: false,
             timeout_ms: None,
             egress_policy: EgressPolicy::PublicOnly,
-          },
+          }),
         })
       }
       ProviderConfig::OpenAI {
@@ -374,7 +374,7 @@ impl ProviderConfig {
         Ok(ResolvedProvider {
           name: provider_name.to_string(),
           protocol: protocol.unwrap_or(ChatProtocol::OpenaiChatCompletions),
-          backend: BackendConfig {
+          backend: Arc::new(BackendConfig {
             base_url: base_url.clone(),
             auth_token: auth_token.into(),
             request_layer: *request_layer,
@@ -382,7 +382,7 @@ impl ProviderConfig {
             no_streaming: false,
             timeout_ms: None,
             egress_policy: EgressPolicy::PublicOnly,
-          },
+          }),
         })
       }
       ProviderConfig::Anthropic {
@@ -402,7 +402,7 @@ impl ProviderConfig {
         Ok(ResolvedProvider {
           name: provider_name.to_string(),
           protocol: ChatProtocol::AnthropicMessages,
-          backend: BackendConfig {
+          backend: Arc::new(BackendConfig {
             base_url: base_url.clone(),
             auth_token: auth_token.into(),
             request_layer: *request_layer,
@@ -410,7 +410,7 @@ impl ProviderConfig {
             no_streaming: false,
             timeout_ms: None,
             egress_policy: EgressPolicy::PublicOnly,
-          },
+          }),
         })
       }
     }
@@ -740,7 +740,7 @@ struct BenchmarkRunner {
 struct ResolvedProvider {
   name: String,
   protocol: ChatProtocol,
-  backend: BackendConfig,
+  backend: Arc<BackendConfig>,
 }
 
 #[derive(Debug)]
@@ -774,7 +774,9 @@ impl BenchmarkRunner {
 
     let mut provider = provider_config.resolve(&config.benchmark.provider)?;
     if provider.backend.timeout_ms.is_none() {
-      provider.backend.timeout_ms = Some(config.settings.timeout_seconds.saturating_mul(1000));
+      Arc::get_mut(&mut provider.backend)
+        .expect("a resolved backend has one owner")
+        .timeout_ms = Some(config.settings.timeout_seconds.saturating_mul(1000));
     }
 
     let prompt_manager = PromptManager::new(config.prompts.clone());
@@ -943,7 +945,7 @@ impl BenchmarkRunner {
 
 fn worker_loop(
   client: Arc<DefaultHttpClient>,
-  backend: BackendConfig,
+  backend: Arc<BackendConfig>,
   protocol: ChatProtocol,
   request: CoreRequest,
   num_requests: usize,
@@ -957,7 +959,7 @@ fn worker_loop(
     }
 
     let start = Instant::now();
-    match dispatch_request(client.as_ref(), &backend, protocol, &request) {
+    match dispatch_request(client.as_ref(), backend.as_ref(), protocol, &request) {
       Ok(response) => {
         results.push(TestResult {
           success: true,

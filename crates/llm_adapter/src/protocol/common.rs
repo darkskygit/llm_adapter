@@ -7,7 +7,7 @@ use super::{
 
 pub(crate) fn parse_role(role: &str, field: &'static str) -> Result<CoreRole, ProtocolError> {
   match role {
-    "system" => Ok(CoreRole::System),
+    "system" | "developer" => Ok(CoreRole::System),
     "user" => Ok(CoreRole::User),
     "assistant" => Ok(CoreRole::Assistant),
     "tool" => Ok(CoreRole::Tool),
@@ -20,7 +20,7 @@ pub(crate) fn parse_role(role: &str, field: &'static str) -> Result<CoreRole, Pr
 
 pub(crate) fn parse_role_lossy(role: &str) -> CoreRole {
   match role {
-    "system" => CoreRole::System,
+    "system" | "developer" => CoreRole::System,
     "user" => CoreRole::User,
     "tool" => CoreRole::Tool,
     _ => CoreRole::Assistant,

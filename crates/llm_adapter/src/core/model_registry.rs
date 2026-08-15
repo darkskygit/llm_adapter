@@ -686,7 +686,7 @@ mod tests {
     let (anthropic, _) = resolve_model_registry_variant(&variants, Some("anthropic"), "claude-fable-5")
       .unwrap()
       .unwrap();
-    let (gemini, _) = resolve_model_registry_variant(&variants, Some("gemini_api"), "gemini-3.6-flash")
+    let (gemini, _) = resolve_model_registry_variant(&variants, Some("gemini_api"), "gemini-3.7-flash")
       .unwrap()
       .unwrap();
     let (kimi, _) = resolve_model_registry_variant(&variants, Some("kimi"), "kimi-k3")
@@ -708,7 +708,7 @@ mod tests {
     assert_eq!(openai_matched_by, "alias");
     assert_eq!(openai.raw_model_id, "gpt-5.6-sol");
     assert_eq!(anthropic.raw_model_id, "claude-fable-5");
-    assert_eq!(gemini.raw_model_id, "gemini-3.6-flash");
+    assert_eq!(gemini.raw_model_id, "gemini-3.7-flash");
     assert_eq!(kimi.raw_model_id, "kimi-k3");
     assert_eq!(opencode_matched_by, "alias");
     assert_eq!(opencode_go.raw_model_id, "kimi-k3");

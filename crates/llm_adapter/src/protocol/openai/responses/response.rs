@@ -14,6 +14,17 @@ pub fn decode(body: &Value) -> Result<CoreResponse, ProtocolError> {
     .ok_or(ProtocolError::MissingResponseField("openai_responses.model"))?
     .to_string();
 
+  if get_str(body, "status") == Some("incomplete") {
+    let reason = body
+      .pointer("/incomplete_details/reason")
+      .and_then(Value::as_str)
+      .unwrap_or("unknown");
+    return Err(ProtocolError::InvalidResponse {
+      field: "openai_responses.status",
+      message: format!("response is incomplete: {reason}"),
+    });
+  }
+
   let mut role = CoreRole::Assistant;
   let mut content = Vec::new();
   if let Some(output_items) = body.get("output").and_then(Value::as_array) {
@@ -230,6 +241,26 @@ mod tests {
         .iter()
         .any(|content| matches!(content, CoreContent::Reasoning { text, .. } if text == "thinking..."))
     );
+  }
+
+  #[test]
+  fn decode_should_report_incomplete_response_reason() {
+    let error = decode(&json!({
+      "id": "resp_incomplete",
+      "model": "gpt-5-mini",
+      "status": "incomplete",
+      "incomplete_details": { "reason": "max_output_tokens" },
+      "output": [{ "type": "reasoning", "summary": [] }]
+    }))
+    .unwrap_err();
+
+    assert!(matches!(
+      error,
+      ProtocolError::InvalidResponse {
+        field: "openai_responses.status",
+        ref message,
+      } if message == "response is incomplete: max_output_tokens"
+    ));
   }
 
   #[test]

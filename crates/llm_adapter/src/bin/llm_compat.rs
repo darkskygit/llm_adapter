@@ -1300,10 +1300,10 @@ fn resolve_token(explicit: Option<&str>, env_name: Option<&str>) -> String {
   if let Some(token) = explicit {
     return token.to_string();
   }
-  if let Some(env_name) = env_name {
-    if let Ok(token) = std::env::var(env_name) {
-      return token;
-    }
+  if let Some(env_name) = env_name
+    && let Ok(token) = std::env::var(env_name)
+  {
+    return token;
   }
   String::new()
 }

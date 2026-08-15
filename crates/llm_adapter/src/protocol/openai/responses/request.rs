@@ -209,6 +209,21 @@ mod tests {
   }
 
   #[test]
+  fn decode_should_treat_developer_instructions_as_system_messages() {
+    let core = decode(&json!({
+      "model": "gpt-4.1",
+      "input": [
+        {"role": "developer", "content": "Follow the output contract."},
+        {"role": "user", "content": "Complete the task."}
+      ]
+    }))
+    .unwrap();
+
+    assert_eq!(core.messages[0].role, CoreRole::System);
+    assert_eq!(core.messages[1].role, CoreRole::User);
+  }
+
+  #[test]
   fn encode_should_match_backend_contract() {
     let core = CoreRequest {
       model: "gpt-4.1".to_string(),
