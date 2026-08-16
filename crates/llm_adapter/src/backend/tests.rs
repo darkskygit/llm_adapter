@@ -13,8 +13,9 @@ use super::{
       sse_done, sse_event,
     },
   },
-  BackendConfig, BackendError, BackendRequestLayer, ChatProtocol, EmbeddingProtocol, HttpBody, HttpResponse,
-  HttpStreamResponse, ImageProtocol, MultipartPart, RerankProtocol, StructuredProtocol, collect_stream_events,
+  BackendConfig, BackendError, BackendRequestLayer, ChatProtocol, EmbeddingProtocol, HttpBody, HttpMethod,
+  HttpRawResponse, HttpResponse, HttpStreamResponse, ImageProtocol, MultipartPart, RerankProtocol, StructuredProtocol,
+  collect_stream_events,
   dispatch::dispatch_stream_encoded_with,
   dispatch_embedding_request, dispatch_image_request, dispatch_request, dispatch_rerank_request,
   dispatch_stream_events_with, dispatch_structured_request,
@@ -519,10 +520,49 @@ fn should_dispatch_gemini_api_request() {
         "totalTokenCount": 16
       }
     }),
-  }))]);
+  }))])
+  .with_raw_responses(vec![
+    Ok(HttpRawResponse {
+      status: 200,
+      headers: vec![("content-type".to_string(), "audio/mp4".to_string())],
+      body: b"audio".to_vec(),
+    }),
+    Ok(HttpRawResponse {
+      status: 200,
+      headers: vec![(
+        "x-goog-upload-url".to_string(),
+        "https://generativelanguage.googleapis.com/upload/session-1".to_string(),
+      )],
+      body: Vec::new(),
+    }),
+    Ok(HttpRawResponse {
+      status: 200,
+      headers: Vec::new(),
+      body: serde_json::to_vec(&json!({
+        "file": {
+          "name": "files/attachment-1",
+          "uri": "https://generativelanguage.googleapis.com/v1beta/files/attachment-1",
+          "mimeType": "audio/mp4",
+          "state": "ACTIVE"
+        }
+      }))
+      .unwrap(),
+    }),
+    Ok(HttpRawResponse {
+      status: 200,
+      headers: Vec::new(),
+      body: Vec::new(),
+    }),
+  ]);
 
   let mut request = sample_request();
   request.model = "gemini-2.5-flash".to_string();
+  request.messages[0].content.push(CoreContent::Audio {
+    source: json!({
+      "url": "https://files.example.com/recording.m4a",
+      "media_type": "audio/mp4"
+    }),
+  });
 
   let mut config = sample_backend_config_with_header(false);
   config.base_url = "https://generativelanguage.googleapis.com/v1beta".to_string();
@@ -541,6 +581,13 @@ fn should_dispatch_gemini_api_request() {
   assert!(requests[0].body.get("stream").is_none());
   assert_eq!(requests[0].body["generationConfig"]["maxOutputTokens"], 128);
   assert_eq!(
+    requests[0].body["contents"][0]["parts"][1]["fileData"],
+    json!({
+      "mimeType": "audio/mp4",
+      "fileUri": "https://generativelanguage.googleapis.com/v1beta/files/attachment-1"
+    })
+  );
+  assert_eq!(
     requests[0].headers,
     vec![
       ("accept".to_string(), "application/json".to_string()),
@@ -549,6 +596,12 @@ fn should_dispatch_gemini_api_request() {
       ("x-test-header".to_string(), "1".to_string()),
     ]
   );
+  let raw_requests = client.raw_requests();
+  assert_eq!(raw_requests.len(), 4);
+  assert_eq!(raw_requests[0].method, HttpMethod::Get);
+  assert_eq!(raw_requests[1].method, HttpMethod::Post);
+  assert_eq!(raw_requests[2].body, b"audio");
+  assert_eq!(raw_requests[3].method, HttpMethod::Delete);
 }
 
 #[test]

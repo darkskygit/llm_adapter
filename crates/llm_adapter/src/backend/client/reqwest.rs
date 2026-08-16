@@ -1,4 +1,4 @@
-use std::time::Duration;
+use std::{io::Read, time::Duration};
 
 use reqwest::{
   blocking::Client,
@@ -8,7 +8,10 @@ use reqwest::{
 use url::Url;
 
 use super::{
-  super::{BackendError, BackendHttpClient, HttpRequest, HttpResponse, HttpUploadRequest},
+  super::{
+    BackendError, BackendHttpClient, HttpMethod, HttpRawRequest, HttpRawResponse, HttpRequest, HttpResponse,
+    HttpUploadRequest,
+  },
   shared::{serialize_http_body, stream_utf8_chunks},
 };
 
@@ -36,6 +39,61 @@ fn build_client(request: &HttpRequest) -> Result<Client, BackendError> {
 }
 
 impl BackendHttpClient for ReqwestHttpClient {
+  fn execute(&self, mut request: HttpRawRequest) -> Result<HttpRawResponse, BackendError> {
+    let headers = build_header_map(&request.headers)?;
+    let client = build_raw_client(&request)?;
+    let mut builder = match request.method {
+      HttpMethod::Get => client.get(&request.url),
+      HttpMethod::Post => client.post(&request.url),
+      HttpMethod::Put => client.put(&request.url),
+      HttpMethod::Delete => client.delete(&request.url),
+    }
+    .headers(headers)
+    .body(std::mem::take(&mut request.body));
+    if let Some(timeout_ms) = request.timeout_ms {
+      builder = builder.timeout(Duration::from_millis(timeout_ms));
+    }
+    let mut response = builder.send().map_err(map_reqwest_error)?;
+    let status = response.status().as_u16();
+    let headers = response
+      .headers()
+      .iter()
+      .map(|(name, value)| {
+        (
+          name.as_str().to_string(),
+          value.to_str().unwrap_or_default().to_string(),
+        )
+      })
+      .collect();
+    let mut body = Vec::new();
+    match request.max_response_bytes {
+      Some(limit) => response
+        .by_ref()
+        .take(limit.saturating_add(1) as u64)
+        .read_to_end(&mut body)
+        .map_err(|error| BackendError::Transport {
+          message: error.to_string(),
+        })?,
+      None => response
+        .read_to_end(&mut body)
+        .map_err(|error| BackendError::Transport {
+          message: error.to_string(),
+        })?,
+    };
+    if request.max_response_bytes.is_some_and(|limit| body.len() > limit) {
+      return Err(BackendError::Transport {
+        message: "HTTP response exceeded configured size limit".to_string(),
+      });
+    }
+    if !(200..300).contains(&status) {
+      return Err(BackendError::UpstreamStatus {
+        status,
+        body: String::from_utf8_lossy(&body).to_string(),
+      });
+    }
+    Ok(HttpRawResponse { status, headers, body })
+  }
+
   fn post_json(&self, request: HttpRequest) -> Result<HttpResponse, BackendError> {
     let mut request = request;
     let body = serialize_http_body(&request.body, &mut request.headers)?;
@@ -131,6 +189,26 @@ impl BackendHttpClient for ReqwestHttpClient {
     }
     Ok(())
   }
+}
+
+fn build_raw_client(request: &HttpRawRequest) -> Result<Client, BackendError> {
+  let url = Url::parse(&request.url).map_err(|error| BackendError::Transport {
+    message: error.to_string(),
+  })?;
+  let host = url.host_str().ok_or_else(|| BackendError::Transport {
+    message: "request URL has no host".to_string(),
+  })?;
+  let addresses = request
+    .egress_policy
+    .resolve(&request.url)
+    .map_err(|error| BackendError::Transport {
+      message: error.to_string(),
+    })?;
+  Client::builder()
+    .redirect(Policy::none())
+    .resolve_to_addrs(host, &addresses)
+    .build()
+    .map_err(map_reqwest_error)
 }
 
 fn map_reqwest_error(error: reqwest::Error) -> BackendError {

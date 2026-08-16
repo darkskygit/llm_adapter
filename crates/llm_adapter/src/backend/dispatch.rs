@@ -13,7 +13,7 @@ use super::{
     },
   },
   BackendConfig, BackendError, BackendHttpClient, BackendRequestLayer, ChatProtocol, EmbeddingProtocol, HttpBody,
-  HttpRequest, ImageProtocol, RerankProtocol, StructuredProtocol, fal_upload,
+  HttpRequest, ImageProtocol, RerankProtocol, StructuredProtocol, fal_upload, gemini_files,
   request_layer::{
     build_extra_headers, resolve_chat_request_layer, resolve_embedding_request_layer, resolve_image_request_layer,
     resolve_rerank_request_layer, resolve_structured_request_layer,
@@ -317,7 +317,25 @@ pub fn dispatch_request(
   protocol: ChatProtocol,
   request: &CoreRequest,
 ) -> Result<CoreResponse, BackendError> {
-  let response = client.post_json(build_http_request(config, &protocol, request, false)?)?;
+  let request_layer = resolve_chat_request_layer(config, &protocol)?;
+  let mut prepared_request = request.clone();
+  let uploaded = if request_layer == BackendRequestLayer::GeminiApi && gemini_files::is_official_gemini_api(config) {
+    let encoded = build_http_request(config, &protocol, request, false)?;
+    Some(gemini_files::prepare_messages(
+      client,
+      config,
+      &mut prepared_request.messages,
+      serialized_json_size(&encoded) > GEMINI_INLINE_REQUEST_LIMIT,
+    )?)
+  } else {
+    None
+  };
+  let result =
+    build_http_request(config, &protocol, &prepared_request, false).and_then(|request| client.post_json(request));
+  if let Some(uploaded) = uploaded {
+    uploaded.cleanup();
+  }
+  let response = result?;
   protocol
     .decode_response(&response.body)
     .map_err(map_response_protocol_error)
@@ -329,7 +347,25 @@ pub fn dispatch_structured_request(
   protocol: StructuredProtocol,
   request: &StructuredRequest,
 ) -> Result<StructuredResponse, BackendError> {
-  let response = client.post_json(build_structured_http_request(config, &protocol, request)?)?;
+  let request_layer = resolve_structured_request_layer(config, &protocol)?;
+  let mut prepared_request = request.clone();
+  let uploaded = if request_layer == BackendRequestLayer::GeminiApi && gemini_files::is_official_gemini_api(config) {
+    let encoded = build_structured_http_request(config, &protocol, request)?;
+    Some(gemini_files::prepare_messages(
+      client,
+      config,
+      &mut prepared_request.messages,
+      serialized_json_size(&encoded) > GEMINI_INLINE_REQUEST_LIMIT,
+    )?)
+  } else {
+    None
+  };
+  let result =
+    build_structured_http_request(config, &protocol, &prepared_request).and_then(|request| client.post_json(request));
+  if let Some(uploaded) = uploaded {
+    uploaded.cleanup();
+  }
+  let response = result?;
   protocol.decode_structured_response(&response.body)
 }
 
@@ -434,15 +470,32 @@ where
   let mut frame_decoder = SseFrameDecoder::default();
   let mut parser = IncrementalStreamParser::new(&protocol);
 
-  let request = build_http_request(config, &protocol, request, true)?;
-  client.post_sse(request, &mut |chunk| {
+  let request_layer = resolve_chat_request_layer(config, &protocol)?;
+  let mut prepared_request = request.clone();
+  let uploaded = if request_layer == BackendRequestLayer::GeminiApi && gemini_files::is_official_gemini_api(config) {
+    let encoded = build_http_request(config, &protocol, request, true)?;
+    Some(gemini_files::prepare_messages(
+      client,
+      config,
+      &mut prepared_request.messages,
+      serialized_json_size(&encoded) > GEMINI_INLINE_REQUEST_LIMIT,
+    )?)
+  } else {
+    None
+  };
+  let request = build_http_request(config, &protocol, &prepared_request, true)?;
+  let stream_result = client.post_sse(request, &mut |chunk| {
     for frame in frame_decoder.push_chunk(chunk) {
       for event in parser.push_frame(frame).map_err(BackendError::from)? {
         on_event(event)?;
       }
     }
     Ok(())
-  })?;
+  });
+  if let Some(uploaded) = uploaded {
+    uploaded.cleanup();
+  }
+  stream_result?;
 
   for frame in frame_decoder.finish() {
     for event in parser.push_frame(frame).map_err(BackendError::from)? {
@@ -454,6 +507,16 @@ where
   }
 
   Ok(())
+}
+
+const GEMINI_INLINE_REQUEST_LIMIT: usize = 19_000_000;
+
+fn serialized_json_size(request: &HttpRequest) -> usize {
+  request
+    .body
+    .as_json()
+    .and_then(|body| serde_json::to_vec(body).ok())
+    .map_or(0, |body| body.len())
 }
 
 #[cfg(test)]

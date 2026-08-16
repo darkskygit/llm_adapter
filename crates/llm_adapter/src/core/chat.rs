@@ -85,6 +85,13 @@ impl CoreContent {
       _ => None,
     }
   }
+
+  pub(crate) fn attachment_source_mut(&mut self) -> Option<&mut Value> {
+    match self {
+      Self::Image { source } | Self::Audio { source } | Self::File { source } => Some(source),
+      _ => None,
+    }
+  }
 }
 
 #[cfg_attr(feature = "schema", derive(JsonSchema))]

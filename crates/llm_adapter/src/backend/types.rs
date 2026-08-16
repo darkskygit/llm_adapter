@@ -395,6 +395,71 @@ pub struct HttpUploadRequest {
   pub egress_policy: EgressPolicy,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HttpMethod {
+  Get,
+  Post,
+  Put,
+  Delete,
+}
+
+pub struct HttpRawRequest {
+  pub method: HttpMethod,
+  pub url: String,
+  pub headers: Vec<(String, String)>,
+  pub body: Vec<u8>,
+  pub timeout_ms: Option<u64>,
+  pub egress_policy: EgressPolicy,
+  pub max_response_bytes: Option<usize>,
+}
+
+impl fmt::Debug for HttpRawRequest {
+  fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+    formatter
+      .debug_struct("HttpRawRequest")
+      .field("method", &self.method)
+      .field("url", &self.url)
+      .field(
+        "header_names",
+        &self.headers.iter().map(|(name, _)| name).collect::<Vec<_>>(),
+      )
+      .field("body_len", &self.body.len())
+      .field("timeout_ms", &self.timeout_ms)
+      .field("egress_policy", &self.egress_policy)
+      .field("max_response_bytes", &self.max_response_bytes)
+      .finish()
+  }
+}
+
+impl Drop for HttpRawRequest {
+  fn drop(&mut self) {
+    use zeroize::Zeroize;
+    self.headers.iter_mut().for_each(|(_, value)| value.zeroize());
+  }
+}
+
+#[cfg(test)]
+impl Clone for HttpRawRequest {
+  fn clone(&self) -> Self {
+    Self {
+      method: self.method,
+      url: self.url.clone(),
+      headers: self.headers.clone(),
+      body: self.body.clone(),
+      timeout_ms: self.timeout_ms,
+      egress_policy: self.egress_policy,
+      max_response_bytes: self.max_response_bytes,
+    }
+  }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct HttpRawResponse {
+  pub status: u16,
+  pub headers: Vec<(String, String)>,
+  pub body: Vec<u8>,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct HttpStreamResponse {
   pub status: u16,
@@ -426,6 +491,12 @@ pub enum BackendError {
 }
 
 pub trait BackendHttpClient {
+  fn execute(&self, _request: HttpRawRequest) -> Result<HttpRawResponse, BackendError> {
+    Err(BackendError::InvalidConfig {
+      message: "HTTP client does not support generic requests".to_string(),
+    })
+  }
+
   fn post_json(&self, request: HttpRequest) -> Result<HttpResponse, BackendError>;
 
   fn put_bytes(&self, _request: HttpUploadRequest) -> Result<(), BackendError> {

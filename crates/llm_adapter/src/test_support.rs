@@ -7,7 +7,8 @@ use serde_json::{Value, json};
 
 use crate::{
   backend::{
-    BackendConfig, BackendError, BackendHttpClient, HttpRequest, HttpResponse, HttpStreamResponse, HttpUploadRequest,
+    BackendConfig, BackendError, BackendHttpClient, HttpRawRequest, HttpRawResponse, HttpRequest, HttpResponse,
+    HttpStreamResponse, HttpUploadRequest,
   },
   core::{
     CoreContent, CoreMessage, CoreRequest, CoreResponse, CoreRole, CoreToolChoice, CoreToolChoiceMode,
@@ -109,9 +110,11 @@ type MockUpload = (String, Vec<(String, String)>, Vec<u8>);
 #[derive(Debug, Clone)]
 pub(crate) struct MockHttpClient {
   requests: Arc<Mutex<Vec<HttpRequest>>>,
+  raw_requests: Arc<Mutex<Vec<HttpRawRequest>>>,
   uploads: Arc<Mutex<Vec<MockUpload>>>,
   json_responses: Arc<Mutex<Vec<MockHttpResponse>>>,
   stream_responses: Arc<Mutex<Vec<MockHttpResponse>>>,
+  raw_responses: Arc<Mutex<Vec<Result<HttpRawResponse, BackendError>>>>,
   stream_chunk_size: usize,
 }
 
@@ -119,9 +122,11 @@ impl Default for MockHttpClient {
   fn default() -> Self {
     Self {
       requests: Arc::new(Mutex::new(Vec::new())),
+      raw_requests: Arc::new(Mutex::new(Vec::new())),
       uploads: Arc::new(Mutex::new(Vec::new())),
       json_responses: Arc::new(Mutex::new(Vec::new())),
       stream_responses: Arc::new(Mutex::new(Vec::new())),
+      raw_responses: Arc::new(Mutex::new(Vec::new())),
       stream_chunk_size: 17,
     }
   }
@@ -142,6 +147,13 @@ impl MockHttpClient {
     }
   }
 
+  pub(crate) fn with_raw_responses(self, responses: Vec<Result<HttpRawResponse, BackendError>>) -> Self {
+    Self {
+      raw_responses: Arc::new(Mutex::new(responses)),
+      ..self
+    }
+  }
+
   pub(crate) fn requests(&self) -> Vec<HttpRequest> {
     self.requests.lock().unwrap().clone()
   }
@@ -149,9 +161,18 @@ impl MockHttpClient {
   pub(crate) fn uploads(&self) -> Vec<MockUpload> {
     self.uploads.lock().unwrap().clone()
   }
+
+  pub(crate) fn raw_requests(&self) -> Vec<HttpRawRequest> {
+    self.raw_requests.lock().unwrap().clone()
+  }
 }
 
 impl BackendHttpClient for MockHttpClient {
+  fn execute(&self, request: HttpRawRequest) -> Result<HttpRawResponse, BackendError> {
+    self.raw_requests.lock().unwrap().push(request);
+    self.raw_responses.lock().unwrap().remove(0)
+  }
+
   fn post_json(&self, request: HttpRequest) -> Result<HttpResponse, BackendError> {
     self.requests.lock().unwrap().push(request);
 

@@ -9,7 +9,10 @@ use ureq::{
 };
 
 use super::{
-  super::{BackendError, BackendHttpClient, HttpRequest, HttpResponse, HttpUploadRequest},
+  super::{
+    BackendError, BackendHttpClient, HttpMethod, HttpRawRequest, HttpRawResponse, HttpRequest, HttpResponse,
+    HttpUploadRequest,
+  },
   shared::{map_io_error, serialize_http_body, stream_utf8_chunks},
 };
 
@@ -51,6 +54,76 @@ impl Resolver for PinnedResolver {
 }
 
 impl BackendHttpClient for UreqHttpClient {
+  fn execute(&self, mut request: HttpRawRequest) -> Result<HttpRawResponse, BackendError> {
+    let url = url::Url::parse(&request.url).map_err(|error| BackendError::Transport {
+      message: error.to_string(),
+    })?;
+    let host = url.host_str().ok_or_else(|| BackendError::Transport {
+      message: "request URL has no host".to_string(),
+    })?;
+    let addresses = request
+      .egress_policy
+      .resolve(&request.url)
+      .map_err(|error| BackendError::Transport {
+        message: error.to_string(),
+      })?;
+    let agent = Agent::with_parts(
+      Agent::config_builder().max_redirects(0).build(),
+      DefaultConnector::new(),
+      PinnedResolver {
+        host: host.to_string(),
+        addresses,
+      },
+    );
+    let method = match request.method {
+      HttpMethod::Get => ureq::http::Method::GET,
+      HttpMethod::Post => ureq::http::Method::POST,
+      HttpMethod::Put => ureq::http::Method::PUT,
+      HttpMethod::Delete => ureq::http::Method::DELETE,
+    };
+    let mut builder = ureq::http::Request::builder().method(method).uri(&request.url);
+    for (key, value) in &request.headers {
+      builder = builder.header(key, value);
+    }
+    let raw_request = builder
+      .body(std::mem::take(&mut request.body))
+      .map_err(|error| BackendError::Transport {
+        message: error.to_string(),
+      })?;
+    let mut config = agent.configure_request(raw_request).http_status_as_error(false);
+    if let Some(timeout_ms) = request.timeout_ms {
+      let timeout = Duration::from_millis(timeout_ms);
+      config = config
+        .timeout_global(Some(timeout))
+        .timeout_per_call(Some(timeout))
+        .timeout_connect(Some(timeout))
+        .timeout_send_request(Some(timeout))
+        .timeout_send_body(Some(timeout))
+        .timeout_recv_response(Some(timeout))
+        .timeout_recv_body(Some(timeout));
+    }
+    let mut response = agent.run(config.build()).map_err(map_ureq_error)?;
+    let status = response.status().as_u16();
+    let headers = response
+      .headers()
+      .iter()
+      .map(|(name, value)| {
+        (
+          name.as_str().to_string(),
+          value.to_str().unwrap_or_default().to_string(),
+        )
+      })
+      .collect();
+    let body = read_response_bytes_limited(&mut response, request.max_response_bytes)?;
+    if !(200..300).contains(&status) {
+      return Err(BackendError::UpstreamStatus {
+        status,
+        body: String::from_utf8_lossy(&body).to_string(),
+      });
+    }
+    Ok(HttpRawResponse { status, headers, body })
+  }
+
   fn post_json(&self, request: HttpRequest) -> Result<HttpResponse, BackendError> {
     let mut request = request;
     let body = serialize_http_body(&request.body, &mut request.headers)?;
@@ -221,6 +294,32 @@ fn read_response_bytes(response: &mut ureq::http::Response<ureq::Body>) -> Resul
     .as_reader()
     .read_to_end(&mut bytes)
     .map_err(map_io_error)?;
+  Ok(bytes)
+}
+
+fn read_response_bytes_limited(
+  response: &mut ureq::http::Response<ureq::Body>,
+  limit: Option<usize>,
+) -> Result<Vec<u8>, BackendError> {
+  let mut bytes = Vec::new();
+  match limit {
+    Some(limit) => response
+      .body_mut()
+      .as_reader()
+      .take(limit.saturating_add(1) as u64)
+      .read_to_end(&mut bytes)
+      .map_err(map_io_error)?,
+    None => response
+      .body_mut()
+      .as_reader()
+      .read_to_end(&mut bytes)
+      .map_err(map_io_error)?,
+  };
+  if limit.is_some_and(|limit| bytes.len() > limit) {
+    return Err(BackendError::Transport {
+      message: "HTTP response exceeded configured size limit".to_string(),
+    });
+  }
   Ok(bytes)
 }
 

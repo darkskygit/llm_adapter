@@ -1,6 +1,7 @@
 mod client;
 mod dispatch;
 mod fal_upload;
+mod gemini_files;
 mod request_layer;
 mod types;
 
@@ -19,8 +20,8 @@ pub use request_layer::{
 };
 pub use types::{
   BackendConfig, BackendError, BackendHttpClient, BackendRequestLayer, ChatProtocol, EmbeddingProtocol, HttpBody,
-  HttpRequest, HttpResponse, HttpStreamResponse, HttpUploadRequest, ImageProtocol, MultipartPart, RerankProtocol,
-  SensitiveString, StructuredProtocol,
+  HttpMethod, HttpRawRequest, HttpRawResponse, HttpRequest, HttpResponse, HttpStreamResponse, HttpUploadRequest,
+  ImageProtocol, MultipartPart, RerankProtocol, SensitiveString, StructuredProtocol,
 };
 
 #[cfg(test)]
