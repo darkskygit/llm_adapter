@@ -138,7 +138,7 @@ pub fn canonicalize_endpoint(value: &str) -> Result<String, TargetCompileError> 
 fn default_endpoint(provider: BackendProvider) -> Result<&'static str, TargetCompileError> {
   match provider {
     BackendProvider::OpenAi => Ok("https://api.openai.com/v1"),
-    BackendProvider::Anthropic => Ok("https://api.anthropic.com/v1"),
+    BackendProvider::Anthropic => Ok("https://api.anthropic.com"),
     BackendProvider::Gemini => Ok("https://generativelanguage.googleapis.com/v1beta"),
     BackendProvider::Fal => Ok("https://fal.run"),
     BackendProvider::Perplexity => Ok("https://api.perplexity.ai"),
@@ -380,6 +380,22 @@ mod tests {
       .unwrap();
       assert_eq!(target.config.base_url, "https://api.openai.com/v1");
     }
+  }
+
+  #[test]
+  fn anthropic_provider_default_is_an_unversioned_api_base() {
+    let target = compile_backend_target(BackendTargetInput {
+      provider: BackendProvider::Anthropic,
+      operation: BackendOperation::Chat,
+      endpoint: BackendEndpoint::ProviderDefault,
+      openai_dialect: None,
+      model: "claude-sonnet-4-6".to_string(),
+      credential: BackendCredential::new("secret".to_string()),
+      timeout_ms: None,
+      egress_policy: EgressPolicy::PublicOnly,
+    })
+    .unwrap();
+    assert_eq!(target.config.base_url, "https://api.anthropic.com");
   }
 
   #[test]

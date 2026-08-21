@@ -202,7 +202,9 @@ pub fn encode(request: &CoreRequest, stream: bool) -> Value {
   if !system_content.is_empty() {
     payload.insert("system".to_string(), Value::Array(system_content));
   }
-  if let Some(temperature) = request.temperature {
+  if let Some(temperature) = request.temperature
+    && model_supports_temperature(&request.model)
+  {
     payload.insert("temperature".to_string(), json!(temperature));
   }
   if !request.tools.is_empty() {
@@ -229,6 +231,16 @@ pub fn encode(request: &CoreRequest, stream: bool) -> Value {
   }
 
   Value::Object(payload)
+}
+
+fn model_supports_temperature(model: &str) -> bool {
+  let model = model.to_ascii_lowercase();
+  !["fable", "opus", "sonnet", "haiku"].iter().any(|family| {
+    model
+      .strip_prefix("claude-")
+      .and_then(|model| model.strip_prefix(family))
+      .is_some_and(|model| model.starts_with("-5"))
+  })
 }
 
 #[cfg(test)]
@@ -336,6 +348,26 @@ mod tests {
     let payload = encode(&request, false);
     assert_eq!(payload["max_tokens"], 4096);
     assert_eq!(payload["temperature"], 0.4);
+  }
+
+  #[test]
+  fn encode_should_omit_temperature_for_anthropic_5_models() {
+    for model in ["claude-fable-5", "claude-opus-5", "claude-sonnet-5", "claude-haiku-5"] {
+      let request = CoreRequest {
+        model: model.to_string(),
+        temperature: Some(0.0),
+        ..request_with_single_content(
+          CoreRole::User,
+          CoreContent::Text {
+            text: "hello".to_string(),
+          },
+        )
+      };
+
+      let payload = encode(&request, false);
+
+      assert!(!payload.as_object().unwrap().contains_key("temperature"), "{model}");
+    }
   }
 
   #[test]
