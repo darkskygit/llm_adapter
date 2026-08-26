@@ -103,7 +103,7 @@ pub(crate) fn parse_message_content(
   }
 
   let mut content = parse_content(content)?;
-  if let Some(raw_tool_calls) = raw_tool_calls {
+  if let Some(raw_tool_calls) = raw_tool_calls.filter(|value| !value.is_null()) {
     content.extend(parse_tool_calls(&raw_tool_calls, tool_call_field)?);
   }
   Ok(content)

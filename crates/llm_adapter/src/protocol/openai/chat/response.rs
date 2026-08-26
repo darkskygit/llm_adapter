@@ -163,7 +163,7 @@ mod tests {
   use super::*;
 
   #[test]
-  fn decode_should_cover_backend_tool_call_case() {
+  fn decode_should_cover_backend_tool_call_cases() {
     let core = decode(&json!({
       "id": "chat_2",
       "model": "gpt-4.1",
@@ -187,5 +187,18 @@ mod tests {
     assert!(core.message.content.iter().any(
       |content| matches!(content, CoreContent::ToolCall { call_id, name, .. } if call_id == "call_2" && name == "doc_read")
     ));
+
+    for message in [
+      json!({"role":"assistant","content":"OK"}),
+      json!({"role":"assistant","content":"OK","tool_calls":Value::Null}),
+    ] {
+      let core = decode(&json!({
+        "id":"chat_3",
+        "model":"compatible-model",
+        "choices":[{"message":message,"finish_reason":"stop"}]
+      }))
+      .unwrap();
+      assert_eq!(core.message.content, vec![CoreContent::Text { text: "OK".to_string() }]);
+    }
   }
 }
