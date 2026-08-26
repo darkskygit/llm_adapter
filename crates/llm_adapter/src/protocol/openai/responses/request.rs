@@ -102,6 +102,19 @@ pub fn decode(request: &Value) -> Result<CoreRequest, ProtocolError> {
     }
   }
 
+  let include = request.include.map(|items| {
+    items
+      .into_iter()
+      .map(|item| {
+        if item == "reasoning.encrypted_content" {
+          "reasoning".to_string()
+        } else {
+          item
+        }
+      })
+      .collect()
+  });
+
   decode_openai_request(OpenaiDecodeRequestInput {
     model: request.model,
     messages,
@@ -110,7 +123,7 @@ pub fn decode(request: &Value) -> Result<CoreRequest, ProtocolError> {
     temperature: None,
     tools: request.tools,
     tool_choice: request.tool_choice,
-    include: request.include,
+    include,
     reasoning: request.reasoning,
     reasoning_effort: None,
   })
@@ -237,7 +250,10 @@ mod tests {
             CoreContent::Image {
               source: json!({
                 "url": "https://example.com/a.png",
-                "detail": "high"
+                "detail": "high",
+                "file_name": "a.png",
+                "media_type": "image/png",
+                "provider_hint": { "provider": "openai" }
               }),
             },
             CoreContent::Image {
@@ -295,6 +311,9 @@ mod tests {
       "https://example.com/a.png"
     );
     assert_eq!(payload["input"][0]["content"][1]["detail"], "high");
+    assert!(payload["input"][0]["content"][1].get("file_name").is_none());
+    assert!(payload["input"][0]["content"][1].get("media_type").is_none());
+    assert!(payload["input"][0]["content"][1].get("provider_hint").is_none());
     assert_eq!(payload["input"][0]["content"][2]["type"], "input_image");
     assert_eq!(
       payload["input"][0]["content"][2]["image_url"],
@@ -304,6 +323,7 @@ mod tests {
     assert_eq!(payload["tools"][0]["name"], "doc_read");
     assert_eq!(payload["tool_choice"]["name"], Value::String("doc_read".to_string()));
     assert_eq!(payload["reasoning"]["effort"], "medium");
+    assert_eq!(payload["include"], json!(["reasoning.encrypted_content"]));
     assert_eq!(
       payload["input"][1],
       json!({
@@ -340,7 +360,7 @@ mod tests {
 
     assert!(matches!(
       &core.messages[0].content[0],
-      CoreContent::File { source } if source["url"] == "https://example.com/manual.pdf" && source["filename"] == "manual.pdf"
+      CoreContent::File { source } if source["url"] == "https://example.com/manual.pdf" && source["file_name"] == "manual.pdf"
     ));
   }
 
@@ -353,8 +373,9 @@ mod tests {
         content: vec![CoreContent::File {
           source: json!({
             "url": "https://example.com/manual.pdf",
-            "filename": "manual.pdf",
-            "media_type": "application/pdf"
+            "file_name": "manual.pdf",
+            "media_type": "application/pdf",
+            "provider_hint": "openai"
           }),
         }],
       }],
@@ -375,6 +396,10 @@ mod tests {
       payload["input"][0]["content"][0]["file_url"],
       "https://example.com/manual.pdf"
     );
+    assert_eq!(payload["input"][0]["content"][0]["filename"], "manual.pdf");
+    assert!(payload["input"][0]["content"][0].get("file_name").is_none());
+    assert!(payload["input"][0]["content"][0].get("media_type").is_none());
+    assert!(payload["input"][0]["content"][0].get("provider_hint").is_none());
   }
 
   #[test]

@@ -282,24 +282,21 @@ fn to_openai_responses_image_part(source: &Value) -> Value {
         return Value::Object(content);
       }
 
-      for (key, value) in object {
-        match key.as_str() {
-          "type" => {}
-          "url" => {
-            content.insert("image_url".to_string(), value.clone());
-          }
-          "image_url" => {
-            let normalized = if let Value::Object(image_object) = value {
-              image_object.get("url").cloned().unwrap_or_else(|| value.clone())
-            } else {
-              value.clone()
-            };
-            content.insert("image_url".to_string(), normalized);
-          }
-          _ => {
-            content.insert(key.clone(), value.clone());
-          }
-        }
+      if let Some(value) = object.get("url") {
+        content.insert("image_url".to_string(), value.clone());
+      } else if let Some(value) = object.get("image_url") {
+        let normalized = if let Value::Object(image_object) = value {
+          image_object.get("url").cloned().unwrap_or_else(|| value.clone())
+        } else {
+          value.clone()
+        };
+        content.insert("image_url".to_string(), normalized);
+      }
+      if let Some(value) = object.get("file_id").or_else(|| object.get("file_handle")) {
+        content.insert("file_id".to_string(), value.clone());
+      }
+      if let Some(value) = object.get("detail") {
+        content.insert("detail".to_string(), value.clone());
       }
     }
     _ => {
@@ -319,22 +316,17 @@ fn to_openai_responses_file_part(source: &Value) -> Value {
       content.insert("file_url".to_string(), Value::String(url.clone()));
     }
     Value::Object(object) => {
-      for (key, value) in object {
-        match key.as_str() {
-          "type" => {}
-          "url" => {
-            content.insert("file_url".to_string(), value.clone());
-          }
-          "data" => {
-            content.insert("file_data".to_string(), value.clone());
-          }
-          "media_type" => {
-            content.insert("media_type".to_string(), value.clone());
-          }
-          _ => {
-            content.insert(key.clone(), value.clone());
-          }
-        }
+      if let Some(value) = object.get("url").or_else(|| object.get("file_url")) {
+        content.insert("file_url".to_string(), value.clone());
+      }
+      if let Some(value) = object.get("data").or_else(|| object.get("file_data")) {
+        content.insert("file_data".to_string(), value.clone());
+      }
+      if let Some(value) = object.get("file_id").or_else(|| object.get("file_handle")) {
+        content.insert("file_id".to_string(), value.clone());
+      }
+      if let Some(value) = object.get("file_name").or_else(|| object.get("filename")) {
+        content.insert("filename".to_string(), value.clone());
       }
     }
     _ => {
@@ -426,7 +418,7 @@ fn file_source_from_openai_item(object: &serde_json::Map<String, Value>) -> Valu
     source.insert("file_id".to_string(), file_id.clone());
   }
   if let Some(filename) = object.get("filename") {
-    source.insert("filename".to_string(), filename.clone());
+    source.insert("file_name".to_string(), filename.clone());
   }
   if let Some(detail) = object.get("detail") {
     source.insert("detail".to_string(), detail.clone());
@@ -871,10 +863,14 @@ pub(crate) fn encode_openai_request(
     payload.insert("tool_choice".to_string(), tool_choice);
   }
   if let Some(include) = &request.include {
-    payload.insert(
-      "include".to_string(),
-      Value::Array(include.iter().map(|item| Value::String(item.clone())).collect()),
-    );
+    let include = include.iter().map(|item| {
+      if flavor == OpenaiRequestFlavor::Responses && item == "reasoning" {
+        Value::String("reasoning.encrypted_content".to_string())
+      } else {
+        Value::String(item.clone())
+      }
+    });
+    payload.insert("include".to_string(), Value::Array(include.collect()));
   }
   if let Some(reasoning) = &request.reasoning {
     if flavor == OpenaiRequestFlavor::ChatCompletions {
@@ -951,7 +947,7 @@ mod tests {
     ));
     assert!(matches!(
       &content[1],
-      CoreContent::File { source } if source["url"] == "https://example.com/manual.pdf" && source["filename"] == "manual.pdf"
+      CoreContent::File { source } if source["url"] == "https://example.com/manual.pdf" && source["file_name"] == "manual.pdf"
     ));
   }
 }

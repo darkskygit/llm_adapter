@@ -249,11 +249,20 @@ fn sanitize_gemini_schema_inner(schema: &Value, root: &Value) -> Value {
       }
 
       let mut sanitized = Map::new();
+      let constant = object
+        .get("const")
+        .filter(|value| !value.is_array() && !value.is_object());
+      if let Some(value) = constant {
+        sanitized.insert("enum".to_string(), Value::Array(vec![value.clone()]));
+      }
       for (key, value) in object {
         if matches!(
           key.as_str(),
-          "$schema" | "$defs" | "$ref" | "additionalProperties" | "definitions"
+          "$schema" | "$defs" | "$ref" | "additionalProperties" | "definitions" | "const"
         ) {
+          continue;
+        }
+        if key == "enum" && constant.is_some() {
           continue;
         }
 
@@ -794,7 +803,7 @@ mod tests {
             "filters": {
               "type": "object",
               "properties": {
-                "docId": { "type": "string" }
+                "docId": { "type": "string", "const": "doc-1", "enum": ["doc-2"] }
               },
               "additionalProperties": false
             }
@@ -823,7 +832,7 @@ mod tests {
           "filters": {
             "type": "object",
             "properties": {
-              "docId": { "type": "string" }
+              "docId": { "type": "string", "enum": ["doc-1"] }
             }
           }
         }
