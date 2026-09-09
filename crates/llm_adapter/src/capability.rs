@@ -345,16 +345,27 @@ mod tests {
     );
     assert!(provider_default_capability_upper_bound("openai", "unknown-model").is_none());
 
-    let fal = provider_default_capability_upper_bound("fal", "lora/image-to-image").unwrap();
-    assert!(declared_model_matches(
-      &fal,
-      &ModelRequirements {
-        input: vec![ModelInput::Text, ModelInput::Image],
-        output: vec![ModelOutput::Image],
-        features: Vec::new(),
-        attachment_kinds: vec![AttachmentKind::Image],
-        attachment_sources: vec![AttachmentSource::Data],
+    for (provider, model) in [
+      ("fal", "lora/image-to-image"),
+      ("openai", "gpt-image-1"),
+      ("openai", "gpt-image-2"),
+    ] {
+      let upper = provider_default_capability_upper_bound(provider, model).unwrap();
+      for source in [AttachmentSource::Data, AttachmentSource::Bytes] {
+        assert!(
+          declared_model_matches(
+            &upper,
+            &ModelRequirements {
+              input: vec![ModelInput::Text, ModelInput::Image],
+              output: vec![ModelOutput::Image],
+              features: Vec::new(),
+              attachment_kinds: vec![AttachmentKind::Image],
+              attachment_sources: vec![source],
+            }
+          ),
+          "{provider}/{model} must accept host-materialized image input"
+        );
       }
-    ));
+    }
   }
 }
