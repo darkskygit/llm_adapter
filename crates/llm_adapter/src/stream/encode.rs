@@ -155,7 +155,8 @@ impl OpenaiChatStreamEncoder {
         }),
       )],
       StreamEvent::ToolResult { output, .. } => {
-        // Chat-completions stream has no native tool-result event. Map to text delta.
+        // Chat-completions stream has no native tool-result event. Map to text
+        // delta.
         vec![json_frame(
           None,
           json!({
@@ -745,7 +746,8 @@ impl AnthropicStreamEncoder {
         frames
       }
       StreamEvent::Citation { index, url } => {
-        // Anthropic stream has no native citation delta block. Map citation to text.
+        // Anthropic stream has no native citation delta block. Map citation to
+        // text.
         self.push_event(&StreamEvent::TextDelta {
           text: format!("[{}] {}", index, url),
         })

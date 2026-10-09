@@ -77,7 +77,23 @@ pub fn decode(body: &Value) -> Result<CoreResponse, ProtocolError> {
     .get("candidates")
     .and_then(Value::as_array)
     .and_then(|candidates| candidates.first())
-    .ok_or(ProtocolError::MissingResponseField("gemini.candidates[0]"))?;
+    .ok_or_else(|| {
+      if let Some(reason) = body
+        .get("promptFeedback")
+        .and_then(|feedback| get_str(feedback, "blockReason"))
+        .filter(|reason| !reason.is_empty() && *reason != "BLOCK_REASON_UNSPECIFIED")
+      {
+        ProtocolError::InvalidResponse {
+          field: "gemini.promptFeedback.blockReason",
+          message: format!("prompt blocked: {reason}"),
+        }
+      } else {
+        ProtocolError::InvalidResponse {
+          field: "gemini.candidates[0]",
+          message: "no candidates returned".to_string(),
+        }
+      }
+    })?;
   let message = parse_candidate_message(candidate);
   let completion_estimate = message_token_estimate(&message);
   let mut finish_reason = get_str(candidate, "finishReason")
@@ -171,6 +187,40 @@ mod tests {
     assert!(core.message.content.iter().any(
       |content| matches!(content, CoreContent::Reasoning { signature: Some(signature), .. } if signature == "sig_1")
     ));
+  }
+
+  #[test]
+  fn decode_should_distinguish_blocked_and_empty_responses() {
+    for candidates in [None, Some(json!([]))] {
+      for reason in [
+        None,
+        Some("BLOCK_REASON_UNSPECIFIED"),
+        Some("SAFETY"),
+        Some("BLOCKLIST"),
+        Some("OTHER"),
+      ] {
+        let mut body = json!({"responseId": "resp_empty"});
+        if let Some(candidates) = &candidates {
+          body["candidates"] = candidates.clone();
+        }
+        if let Some(reason) = reason {
+          body["promptFeedback"] = json!({"blockReason": reason});
+        }
+        let error = decode(&body).unwrap_err().to_string();
+        match reason {
+          Some(reason) if reason != "BLOCK_REASON_UNSPECIFIED" => {
+            assert_eq!(
+              error,
+              format!("invalid response field `gemini.promptFeedback.blockReason`: prompt blocked: {reason}")
+            );
+          }
+          _ => assert_eq!(
+            error,
+            "invalid response field `gemini.candidates[0]`: no candidates returned"
+          ),
+        }
+      }
+    }
   }
 
   #[test]

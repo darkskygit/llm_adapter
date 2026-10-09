@@ -206,7 +206,8 @@ impl OpenaiChatStreamParser {
         }
       }
 
-      // Some OpenAI-compatible providers still emit the legacy function_call shape.
+      // Some OpenAI-compatible providers still emit the legacy function_call
+      // shape.
       if let Some(function_call_delta) = delta.get("function_call") {
         self.merge_legacy_function_call_delta(function_call_delta, events);
       }
