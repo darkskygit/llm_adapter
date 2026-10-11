@@ -107,7 +107,7 @@ pub fn encode(request: &RerankRequest, candidate_index: usize) -> Result<Value, 
     ("model".to_string(), Value::String(request.model.clone())),
     (
       "messages".to_string(),
-      Value::Array(messages_from_core(&batch, OpenaiRequestFlavor::ChatCompletions)),
+      Value::Array(messages_from_core(&batch, OpenaiRequestFlavor::ChatCompletions)?),
     ),
     ("stream".to_string(), Value::Bool(false)),
     ("temperature".to_string(), json!(0.0)),

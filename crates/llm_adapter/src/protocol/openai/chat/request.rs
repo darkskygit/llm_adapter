@@ -61,14 +61,13 @@ pub fn decode(request: &Value) -> Result<CoreRequest, ProtocolError> {
   })
 }
 
-#[must_use]
-pub fn encode(request: &CoreRequest, stream: bool) -> Value {
-  encode_openai_request(
+pub fn encode(request: &CoreRequest, stream: bool) -> Result<Value, ProtocolError> {
+  Ok(encode_openai_request(
     request,
     stream,
     OpenaiRequestFlavor::ChatCompletions,
-    messages_from_core(&request.messages, OpenaiRequestFlavor::ChatCompletions),
-  )
+    messages_from_core(&request.messages, OpenaiRequestFlavor::ChatCompletions)?,
+  ))
 }
 
 #[cfg(test)]
@@ -243,7 +242,7 @@ mod tests {
       response_schema: None,
     };
 
-    let payload = encode(&core, true);
+    let payload = encode(&core, true).unwrap();
     assert_eq!(payload["stream"], true);
     assert_eq!(payload["stream_options"]["include_usage"], true);
     assert_eq!(payload["max_completion_tokens"], 256);
@@ -286,7 +285,7 @@ mod tests {
       response_schema: None,
     };
 
-    let payload = encode(&core, false);
+    let payload = encode(&core, false).unwrap();
 
     assert!(payload["messages"][0]["tool_calls"][0].get("thought").is_none());
   }
@@ -319,7 +318,7 @@ mod tests {
 
   #[test]
   fn encode_should_emit_audio_parts_for_chat_completions() {
-    let core = CoreRequest {
+    let mut core = CoreRequest {
       model: "gpt-audio".to_string(),
       messages: vec![CoreMessage {
         role: CoreRole::User,
@@ -345,10 +344,54 @@ mod tests {
       response_schema: None,
     };
 
-    let payload = encode(&core, false);
-
-    assert_eq!(payload["messages"][0]["content"][1]["type"], "input_audio");
-    assert_eq!(payload["messages"][0]["content"][1]["input_audio"]["format"], "wav");
+    for (media_type, format) in [
+      ("audio/wav", "wav"),
+      ("audio/mp3", "mp3"),
+      ("audio/ogg", "ogg"),
+      ("audio/opus", "ogg"),
+      ("audio/flac", "flac"),
+      ("audio/m4a", "m4a"),
+      ("audio/mp4", "m4a"),
+      ("Audio/X-M4A; codecs=opus", "m4a"),
+    ] {
+      for source in [
+        json!({ "data": "Zm9v", "media_type": media_type }),
+        json!({ "url": format!("data:{media_type};base64,Zm9v") }),
+        json!(format!("data:{media_type};base64,Zm9v")),
+      ] {
+        core.messages[0].content[1] = CoreContent::Audio { source };
+        let payload = encode(&core, false).unwrap();
+        assert_eq!(
+          payload["messages"][0]["content"][1],
+          json!({
+            "type": "input_audio", "input_audio": { "format": format, "data": "Zm9v" }
+          })
+        );
+        assert!(crate::protocol::openai::responses::request::encode(&core, false).is_err());
+      }
+    }
+    for source in [
+      json!({ "data": "Zm9v", "media_type": "audio/aac" }),
+      json!({ "data": "Zm9v", "media_type": "audio/unknown" }),
+      json!({ "url": "https://example.com/audio.m4a", "media_type": "audio/m4a" }),
+      Value::Null,
+    ] {
+      core.messages[0].content[1] = CoreContent::Audio { source };
+      assert!(matches!(
+        encode(&core, false),
+        Err(ProtocolError::InvalidRequest {
+          field: "messages[].content.audio",
+          ..
+        })
+      ));
+    }
+    core.messages[0].content[1] = CoreContent::Audio {
+      source: json!({ "data": "Zm9v", "format": "aac" }),
+    };
+    assert_eq!(
+      encode(&core, false).unwrap()["messages"][0]["content"][1]["input_audio"]["format"],
+      "aac"
+    );
   }
 
   #[test]
@@ -379,7 +422,8 @@ mod tests {
         })),
       },
       false,
-    );
+    )
+    .unwrap();
 
     assert_eq!(payload["response_format"]["type"], "json_schema");
     assert_eq!(payload["response_format"]["json_schema"]["name"], "structured_output");

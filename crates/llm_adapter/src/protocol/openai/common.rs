@@ -3,8 +3,7 @@ use serde_json::{Map, Value, json};
 
 use super::{
   CoreAttachmentKind, CoreContent, CoreMessage, CoreRequest, CoreToolChoice, CoreToolChoiceMode, CoreToolDefinition,
-  CoreUsage, ProtocolError, attachment_content_from_source, attachment_source, core_role_to_string, get_str,
-  parse_json, stringify_json,
+  CoreUsage, ProtocolError, attachment_content_from_source, core_role_to_string, get_str, parse_json, stringify_json,
 };
 
 #[derive(Debug, Deserialize)]
@@ -215,7 +214,8 @@ fn audio_format_from_media_type(media_type: &str) -> Option<&'static str> {
   {
     "audio/wav" | "audio/x-wav" => Some("wav"),
     "audio/mpeg" | "audio/mp3" => Some("mp3"),
-    "audio/ogg" => Some("ogg"),
+    "audio/ogg" | "audio/opus" | "application/ogg" => Some("ogg"),
+    "audio/mp4" | "audio/m4a" | "audio/x-m4a" => Some("m4a"),
     "audio/flac" => Some("flac"),
     _ => None,
   }
@@ -523,8 +523,11 @@ fn parse_text_or_array_content(value: Option<Value>) -> Result<Vec<CoreContent>,
   }
 }
 
-fn core_content_to_openai_content_part(content: &CoreContent, flavor: OpenaiRequestFlavor) -> Vec<Value> {
-  match content {
+fn core_content_to_openai_content_part(
+  content: &CoreContent,
+  flavor: OpenaiRequestFlavor,
+) -> Result<Vec<Value>, ProtocolError> {
+  Ok(match content {
     CoreContent::Text { text } => {
       let text_type = match flavor {
         OpenaiRequestFlavor::ChatCompletions => "text",
@@ -539,20 +542,31 @@ fn core_content_to_openai_content_part(content: &CoreContent, flavor: OpenaiRequ
       OpenaiRequestFlavor::Responses => vec![to_openai_responses_image_part(source)],
     },
     CoreContent::Audio { source } => match flavor {
-      OpenaiRequestFlavor::ChatCompletions => to_openai_chat_audio_source(source)
-        .map(|input_audio| vec![json!({ "type": "input_audio", "input_audio": input_audio })])
-        .unwrap_or_default(),
-      OpenaiRequestFlavor::Responses => Vec::new(),
+      OpenaiRequestFlavor::ChatCompletions => {
+        let input_audio = to_openai_chat_audio_source(source).ok_or_else(|| ProtocolError::InvalidRequest {
+          field: "messages[].content.audio",
+          message: "audio requires inline data with a supported media type or explicit format".to_string(),
+        })?;
+        vec![json!({ "type": "input_audio", "input_audio": input_audio })]
+      }
+      OpenaiRequestFlavor::Responses => {
+        return Err(ProtocolError::InvalidRequest {
+          field: "messages[].content.audio",
+          message: "audio input is unsupported by the OpenAI Responses encoder; use an audio-capable Chat Completions \
+                    endpoint"
+            .to_string(),
+        });
+      }
     },
     CoreContent::File { source } => match flavor {
       OpenaiRequestFlavor::ChatCompletions => Vec::new(),
       OpenaiRequestFlavor::Responses => vec![to_openai_responses_file_part(source)],
     },
     _ => Vec::new(),
-  }
+  })
 }
 
-fn core_message_to_openai(message: &CoreMessage, flavor: OpenaiRequestFlavor) -> Vec<Value> {
+fn core_message_to_openai(message: &CoreMessage, flavor: OpenaiRequestFlavor) -> Result<Vec<Value>, ProtocolError> {
   let mut text_parts = Vec::new();
   let mut reasoning_parts = Vec::new();
   let mut attachment_parts = Vec::new();
@@ -564,9 +578,7 @@ fn core_message_to_openai(message: &CoreMessage, flavor: OpenaiRequestFlavor) ->
       CoreContent::Text { text } => text_parts.push(text.clone()),
       CoreContent::Reasoning { text, .. } => reasoning_parts.push(text.clone()),
       CoreContent::Image { .. } | CoreContent::Audio { .. } | CoreContent::File { .. } => {
-        if attachment_source(content).is_some() {
-          attachment_parts.extend(core_content_to_openai_content_part(content, flavor));
-        }
+        attachment_parts.extend(core_content_to_openai_content_part(content, flavor)?);
       }
       CoreContent::ToolCall {
         call_id,
@@ -636,21 +648,23 @@ fn core_message_to_openai(message: &CoreMessage, flavor: OpenaiRequestFlavor) ->
         "output": stringify_json(&output),
       })
     }));
-    return items;
+    return Ok(items);
   }
 
   if tool_results.len() > 1 {
-    return tool_results
-      .into_iter()
-      .map(|(call_id, output, is_error)| {
-        json!({
-          "role": "tool",
-          "tool_call_id": call_id,
-          "content": stringify_json(&output),
-          "is_error": is_error,
+    return Ok(
+      tool_results
+        .into_iter()
+        .map(|(call_id, output, is_error)| {
+          json!({
+            "role": "tool",
+            "tool_call_id": call_id,
+            "content": stringify_json(&output),
+            "is_error": is_error,
+          })
         })
-      })
-      .collect();
+        .collect(),
+    );
   }
 
   let role = if !tool_results.is_empty() {
@@ -695,14 +709,18 @@ fn core_message_to_openai(message: &CoreMessage, flavor: OpenaiRequestFlavor) ->
     object.insert("tool_calls".to_string(), Value::Array(tool_calls));
   }
 
-  vec![Value::Object(object)]
+  Ok(vec![Value::Object(object)])
 }
 
-pub(crate) fn messages_from_core(messages: &[CoreMessage], flavor: OpenaiRequestFlavor) -> Vec<Value> {
-  messages
-    .iter()
-    .flat_map(|message| core_message_to_openai(message, flavor))
-    .collect()
+pub(crate) fn messages_from_core(
+  messages: &[CoreMessage],
+  flavor: OpenaiRequestFlavor,
+) -> Result<Vec<Value>, ProtocolError> {
+  let mut items = Vec::new();
+  for message in messages {
+    items.extend(core_message_to_openai(message, flavor)?);
+  }
+  Ok(items)
 }
 
 pub(crate) fn parse_tool_choice(value: Option<Value>) -> Result<Option<CoreToolChoice>, ProtocolError> {

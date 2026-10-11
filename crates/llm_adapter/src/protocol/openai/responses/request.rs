@@ -129,14 +129,13 @@ pub fn decode(request: &Value) -> Result<CoreRequest, ProtocolError> {
   })
 }
 
-#[must_use]
-pub fn encode(request: &CoreRequest, stream: bool) -> Value {
-  encode_openai_request(
+pub fn encode(request: &CoreRequest, stream: bool) -> Result<Value, ProtocolError> {
+  Ok(encode_openai_request(
     request,
     stream,
     OpenaiRequestFlavor::Responses,
-    messages_from_core(&request.messages, OpenaiRequestFlavor::Responses),
-  )
+    messages_from_core(&request.messages, OpenaiRequestFlavor::Responses)?,
+  ))
 }
 
 #[cfg(test)]
@@ -301,7 +300,7 @@ mod tests {
       response_schema: None,
     };
 
-    let payload = encode(&core, true);
+    let payload = encode(&core, true).unwrap();
     assert_eq!(payload["stream"], true);
     assert_eq!(payload["max_output_tokens"], 256);
     assert_eq!(payload["input"][0]["content"][0]["type"], "input_text");
@@ -389,7 +388,7 @@ mod tests {
       response_schema: None,
     };
 
-    let payload = encode(&core, false);
+    let payload = encode(&core, false).unwrap();
 
     assert_eq!(payload["input"][0]["content"][0]["type"], "input_file");
     assert_eq!(
@@ -430,7 +429,8 @@ mod tests {
         })),
       },
       false,
-    );
+    )
+    .unwrap();
 
     assert_eq!(payload["text"]["format"]["type"], "json_schema");
     assert_eq!(payload["text"]["format"]["name"], "structured_output");

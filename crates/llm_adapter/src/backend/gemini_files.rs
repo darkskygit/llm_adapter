@@ -28,6 +28,12 @@ struct UploadResponse {
   file: GeminiFile,
 }
 
+struct MaterializedAttachment {
+  bytes: Vec<u8>,
+  media_type: String,
+  display_name: Option<String>,
+}
+
 pub(super) struct UploadedGeminiFiles<'a> {
   client: &'a dyn BackendHttpClient,
   config: &'a BackendConfig,
@@ -81,7 +87,12 @@ fn prepare_message_attachments(
     let Some(source) = content.attachment_source_mut() else {
       continue;
     };
-    let Some((bytes, media_type, display_name)) = materialize_source(client, config, source, upload_inline)? else {
+    let Some(MaterializedAttachment {
+      bytes,
+      media_type,
+      display_name,
+    }) = materialize_source(client, config, source, upload_inline)?
+    else {
       continue;
     };
     total_bytes = total_bytes.saturating_add(bytes.len());
@@ -106,7 +117,7 @@ fn materialize_source(
   config: &BackendConfig,
   source: &Value,
   upload_inline: bool,
-) -> Result<Option<(Vec<u8>, String, Option<String>)>, BackendError> {
+) -> Result<Option<MaterializedAttachment>, BackendError> {
   let object = match source {
     Value::String(url) => return materialize_url(client, config, url, None, None),
     Value::Object(object) => object,
@@ -136,7 +147,11 @@ fn materialize_source(
     field: "attachments",
     message: "inline Gemini attachment requires media_type".to_string(),
   })?;
-  Ok(Some((bytes, media_type, display_name)))
+  Ok(Some(MaterializedAttachment {
+    bytes,
+    media_type,
+    display_name,
+  }))
 }
 
 fn inline_bytes(object: &serde_json::Map<String, Value>) -> Result<Option<Vec<u8>>, BackendError> {
@@ -173,7 +188,7 @@ fn materialize_url(
   url: &str,
   media_type: Option<String>,
   display_name: Option<String>,
-) -> Result<Option<(Vec<u8>, String, Option<String>)>, BackendError> {
+) -> Result<Option<MaterializedAttachment>, BackendError> {
   if is_gemini_file_uri(url) || is_youtube_url(url) {
     return Ok(None);
   }
@@ -202,7 +217,11 @@ fn materialize_url(
   let media_type = media_type
     .or(response_media_type)
     .unwrap_or_else(|| infer_media_type_from_url(url).to_string());
-  Ok(Some((response.body, media_type, display_name)))
+  Ok(Some(MaterializedAttachment {
+    bytes: response.body,
+    media_type,
+    display_name,
+  }))
 }
 
 fn upload_file(

@@ -7,7 +7,7 @@ license.workspace     = true
 name                  = "llm_adapter"
 readme                = "../../README.md"
 repository.workspace  = true
-version               = "0.2.25"
+version               = "0.3.0"
 
 [features]
 benchmark-cli  = ["dep:anyhow", "dep:clap", "dep:rand", "dep:toml"]
@@ -20,6 +20,7 @@ ureq-client    = ["dep:ureq"]
 anyhow     = { workspace = true, optional = true }
 base64     = { workspace = true }
 clap       = { workspace = true, optional = true }
+jsonschema = { workspace = true, optional = true }
 rand       = { workspace = true, optional = true }
 reqwest    = { workspace = true, optional = true }
 schemars   = { workspace = true, optional = true }
@@ -31,7 +32,6 @@ toml       = { workspace = true, optional = true }
 ureq       = { workspace = true, optional = true }
 url        = { workspace = true }
 zeroize    = { workspace = true }
-jsonschema = { workspace = true, optional = true }
 
 [[bin]]
 name              = "llm_benchmark"

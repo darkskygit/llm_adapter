@@ -84,7 +84,11 @@ fn should_dispatch_openai_chat_request() {
 
   let mut config = sample_backend_config_with_header(false);
   config.base_url = "https://api.example.com/v1".to_string();
-  let response = dispatch_request(&client, &config, ChatProtocol::OpenaiChatCompletions, &sample_request()).unwrap();
+  let mut request = sample_request();
+  request.messages[0].content.push(CoreContent::Audio {
+    source: json!({ "data": "Zm9v", "media_type": "audio/m4a" }),
+  });
+  let response = dispatch_request(&client, &config, ChatProtocol::OpenaiChatCompletions, &request).unwrap();
 
   assert_eq!(response.id, "chat_1");
 
@@ -92,6 +96,25 @@ fn should_dispatch_openai_chat_request() {
   assert_eq!(requests.len(), 1);
   assert_eq!(requests[0].url, "https://api.example.com/v1/chat/completions");
   assert_eq!(requests[0].body["stream"], Value::Bool(false));
+  assert_eq!(
+    requests[0].body["messages"][0]["content"][1]["input_audio"],
+    json!({ "data": "Zm9v", "format": "m4a" })
+  );
+  for protocol in [ChatProtocol::OpenaiResponses, ChatProtocol::OpenaiChatCompletions] {
+    if protocol == ChatProtocol::OpenaiChatCompletions {
+      request.messages[0].content[1] = CoreContent::Audio {
+        source: json!({ "data": "Zm9v", "media_type": "audio/aac" }),
+      };
+    }
+    let rejected = MockHttpClient::with_json_responses(vec![]);
+    assert!(matches!(
+      dispatch_request(&rejected, &config, protocol, &request),
+      Err(BackendError::InvalidRequest { .. })
+    ));
+    assert!(rejected.requests().is_empty());
+    assert!(dispatch_stream_events_with(&rejected, &config, protocol, &request, |_| Ok(())).is_err());
+    assert!(rejected.requests().is_empty());
+  }
   assert_eq!(
     requests[0].headers,
     vec![
@@ -628,7 +651,7 @@ fn should_dispatch_openai_structured_request() {
     }),
   }))]);
 
-  let request = StructuredRequest {
+  let mut request = StructuredRequest {
     model: "gpt-4.1".to_string(),
     messages: vec![CoreMessage {
       role: CoreRole::User,
@@ -666,6 +689,44 @@ fn should_dispatch_openai_structured_request() {
   assert_eq!(requests[0].url, "https://api.example.com/responses");
   assert_eq!(requests[0].body["text"]["format"]["type"], "json_schema");
   assert_eq!(requests[0].body["text"]["format"]["schema"], request.schema);
+  request.messages[0].content.push(CoreContent::Audio {
+    source: json!({ "data": "Zm9v", "media_type": "audio/m4a" }),
+  });
+  let audio_client = MockHttpClient::with_json_responses(vec![MockHttpResponse::Json(Ok(HttpResponse {
+    status: 200,
+    body: json!({
+      "id": "audio-1", "model": "custom-audio",
+      "choices": [{ "index": 0, "message": { "role": "assistant", "content": "{\"summary\":\"Speech\"}" }, "finish_reason": "stop" }]
+    }),
+  }))]);
+  let audio = dispatch_structured_request(
+    &audio_client,
+    &sample_backend_config(false),
+    StructuredProtocol::OpenaiChatCompletions,
+    &request,
+  )
+  .unwrap();
+  assert_eq!(audio.output_json, Some(json!({ "summary": "Speech" })));
+  assert_eq!(
+    audio_client.requests()[0].body["messages"][0]["content"][1]["input_audio"],
+    json!({ "data": "Zm9v", "format": "m4a" })
+  );
+  for protocol in [
+    StructuredProtocol::OpenaiResponses,
+    StructuredProtocol::OpenaiChatCompletions,
+  ] {
+    if protocol == StructuredProtocol::OpenaiChatCompletions {
+      request.messages[0].content[1] = CoreContent::Audio {
+        source: json!({ "data": "Zm9v", "media_type": "audio/aac" }),
+      };
+    }
+    let rejected = MockHttpClient::with_json_responses(vec![]);
+    assert!(matches!(
+      dispatch_structured_request(&rejected, &sample_backend_config(false), protocol, &request),
+      Err(BackendError::InvalidRequest { .. })
+    ));
+    assert!(rejected.requests().is_empty());
+  }
 }
 
 #[test]

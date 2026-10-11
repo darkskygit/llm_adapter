@@ -29,12 +29,12 @@ impl ChatProtocol {
     stream: bool,
     request_layer: BackendRequestLayer,
     base_url: &str,
-  ) -> Value {
+  ) -> Result<Value, ProtocolError> {
     match self {
       ChatProtocol::OpenaiChatCompletions => openai::chat::request::encode(request, stream),
       ChatProtocol::OpenaiResponses => openai::responses::request::encode(request, stream),
-      ChatProtocol::AnthropicMessages => anthropic::request::encode(request, stream),
-      ChatProtocol::GeminiGenerateContent => gemini::request::encode(request, stream, request_layer, base_url),
+      ChatProtocol::AnthropicMessages => Ok(anthropic::request::encode(request, stream)),
+      ChatProtocol::GeminiGenerateContent => Ok(gemini::request::encode(request, stream, request_layer, base_url)),
     }
   }
 
@@ -56,8 +56,8 @@ impl StructuredProtocol {
     base_url: &str,
   ) -> Result<Value, ProtocolError> {
     match self {
-      StructuredProtocol::OpenaiChatCompletions => Ok(openai::chat::request::encode(&request.as_core_request(), false)),
-      StructuredProtocol::OpenaiResponses => Ok(openai::responses::request::encode(&request.as_core_request(), false)),
+      StructuredProtocol::OpenaiChatCompletions => openai::chat::request::encode(&request.as_core_request(), false),
+      StructuredProtocol::OpenaiResponses => openai::responses::request::encode(&request.as_core_request(), false),
       StructuredProtocol::GeminiGenerateContent => Ok(gemini::request::encode(
         &request.as_core_request(),
         false,
@@ -198,7 +198,11 @@ fn build_http_request(
   let mut headers = request_layer.build_headers(config, stream);
   headers.extend(build_extra_headers(config));
 
-  let body = request_layer.rewrite_body(protocol.encode_request(request, stream, request_layer, &config.base_url));
+  let body = request_layer.rewrite_body(
+    protocol
+      .encode_request(request, stream, request_layer, &config.base_url)
+      .map_err(map_request_protocol_error)?,
+  );
 
   Ok(HttpRequest {
     url: request_layer.build_url(&config.base_url, &request.model, stream),
