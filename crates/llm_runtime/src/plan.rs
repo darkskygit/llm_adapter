@@ -1,5 +1,5 @@
 use llm_adapter::{
-  backend::{BackendError, BackendHttpClient},
+  backend::{BackendError, BackendHttpClient, RequestTransmission},
   core::{CoreMessage, CoreUsage, ImageUsage, StreamEvent},
   router::{ExecutablePreparedRoute, ExecutableResponse, dispatch_prepared_route, dispatch_prepared_stream},
 };
@@ -34,13 +34,29 @@ pub enum CompiledPlanError {
   NoCandidates,
   #[error(transparent)]
   Backend(#[from] BackendError),
+  #[error("{source}")]
+  Dispatch {
+    #[source]
+    source: BackendError,
+    transmission: RequestTransmission,
+  },
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum RuntimeRouteEvent {
-  Selected { route_id: String },
-  Failed { route_id: String, error_kind: String },
-  Usage { route_id: String, usage: RuntimeUsage },
+  Selected {
+    route_id: String,
+    prior_transmission: RequestTransmission,
+  },
+  Failed {
+    route_id: String,
+    error_kind: String,
+    transmission: RequestTransmission,
+  },
+  Usage {
+    route_id: String,
+    usage: RuntimeUsage,
+  },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -95,14 +111,16 @@ where
 {
   plan.replace_chat_messages(messages)?;
   let mut last_error = None;
+  let mut transmission = RequestTransmission::NotSent;
   for candidate in &plan.candidates {
     if should_abort() {
-      return Err(
-        BackendError::Transport {
-          message: "stream aborted".to_string(),
-        }
-        .into(),
-      );
+      return Err(CompiledPlanError::Dispatch {
+        source: BackendError::Transport {
+          message: "stream aborted".into(),
+          context: None,
+        },
+        transmission,
+      });
     }
     let mut runner = StreamRoundRunner::default();
     let mut emitted_content = false;
@@ -110,6 +128,7 @@ where
       if should_abort() {
         return Err(BackendError::Transport {
           message: "stream aborted".to_string(),
+          context: None,
         });
       }
       if let StreamEvent::Usage { usage } = &event {
@@ -122,6 +141,7 @@ where
         event,
         |error: RoundProcessorError| BackendError::Transport {
           message: error.to_string(),
+          context: None,
         },
         |event| {
           emitted_content = true;
@@ -133,22 +153,39 @@ where
       Ok(()) => {
         emit_route(RuntimeRouteEvent::Selected {
           route_id: candidate.route_id.clone(),
+          prior_transmission: transmission,
         });
         return Ok(runner.finish());
       }
       Err(error) => {
+        let candidate_transmission = if emitted_content {
+          RequestTransmission::PossiblySent
+        } else {
+          error.transmission()
+        };
+        if candidate_transmission == RequestTransmission::PossiblySent {
+          transmission = RequestTransmission::PossiblySent;
+        }
         emit_route(RuntimeRouteEvent::Failed {
           route_id: candidate.route_id.clone(),
           error_kind: error_kind(&error).to_string(),
+          transmission: candidate_transmission,
         });
         if emitted_content {
-          return Err(error.into());
+          transmission = RequestTransmission::PossiblySent;
+          return Err(CompiledPlanError::Dispatch {
+            source: error,
+            transmission,
+          });
         }
         last_error = Some(error);
       }
     }
   }
-  Err(last_error.unwrap_or(BackendError::NoBackendAvailable).into())
+  Err(CompiledPlanError::Dispatch {
+    source: last_error.unwrap_or(BackendError::NoBackendAvailable),
+    transmission,
+  })
 }
 
 pub fn dispatch_compiled_plan<Emit>(
@@ -160,11 +197,13 @@ where
   Emit: FnMut(RuntimeRouteEvent),
 {
   let mut last_error = None;
+  let mut transmission = RequestTransmission::NotSent;
   for candidate in &plan.candidates {
     match dispatch_prepared_route(client, &candidate.route) {
       Ok(response) => {
         emit(RuntimeRouteEvent::Selected {
           route_id: candidate.route_id.clone(),
+          prior_transmission: transmission,
         });
         if let Some(usage) = response_usage(&response) {
           emit(RuntimeRouteEvent::Usage {
@@ -175,15 +214,22 @@ where
         return Ok(response);
       }
       Err(error) => {
+        if error.transmission() == RequestTransmission::PossiblySent {
+          transmission = RequestTransmission::PossiblySent;
+        }
         emit(RuntimeRouteEvent::Failed {
           route_id: candidate.route_id.clone(),
           error_kind: error_kind(&error).to_string(),
+          transmission: error.transmission(),
         });
         last_error = Some(error);
       }
     }
   }
-  Err(last_error.unwrap_or(BackendError::NoBackendAvailable).into())
+  Err(CompiledPlanError::Dispatch {
+    source: last_error.unwrap_or(BackendError::NoBackendAvailable),
+    transmission,
+  })
 }
 
 pub fn dispatch_compiled_stream<EmitEvent, EmitRoute>(
@@ -197,6 +243,7 @@ where
   EmitRoute: FnMut(RuntimeRouteEvent),
 {
   let mut last_error = None;
+  let mut transmission = RequestTransmission::NotSent;
   for candidate in &plan.candidates {
     let mut emitted_content = false;
     let result = dispatch_prepared_stream(client, &candidate.route, |event| {
@@ -213,22 +260,39 @@ where
       Ok(()) => {
         emit_route(RuntimeRouteEvent::Selected {
           route_id: candidate.route_id.clone(),
+          prior_transmission: transmission,
         });
         return Ok(());
       }
       Err(error) => {
+        let candidate_transmission = if emitted_content {
+          RequestTransmission::PossiblySent
+        } else {
+          error.transmission()
+        };
+        if candidate_transmission == RequestTransmission::PossiblySent {
+          transmission = RequestTransmission::PossiblySent;
+        }
         emit_route(RuntimeRouteEvent::Failed {
           route_id: candidate.route_id.clone(),
           error_kind: error_kind(&error).to_string(),
+          transmission: candidate_transmission,
         });
         if emitted_content {
-          return Err(error.into());
+          transmission = RequestTransmission::PossiblySent;
+          return Err(CompiledPlanError::Dispatch {
+            source: error,
+            transmission,
+          });
         }
         last_error = Some(error);
       }
     }
   }
-  Err(last_error.unwrap_or(BackendError::NoBackendAvailable).into())
+  Err(CompiledPlanError::Dispatch {
+    source: last_error.unwrap_or(BackendError::NoBackendAvailable),
+    transmission,
+  })
 }
 
 fn response_usage(response: &ExecutableResponse) -> Option<RuntimeUsage> {
@@ -278,9 +342,20 @@ mod tests {
 
   impl BackendHttpClient for Client {
     fn post_json(&self, request: HttpRequest) -> Result<HttpResponse, BackendError> {
+      if request.url.contains("dns.example") {
+        return Err(BackendError::Transport {
+          message: "DNS fixture".into(),
+          context: Some(llm_adapter::backend::HttpFailureContext {
+            stage: llm_adapter::backend::HttpFailureStage::Resolve,
+            kind: llm_adapter::backend::HttpFailureKind::Dns,
+            received_bytes: None,
+          }),
+        });
+      }
       if request.url.contains("failed.example") {
         return Err(BackendError::Transport {
           message: "failed".to_string(),
+          context: None,
         });
       }
       Ok(HttpResponse {
@@ -300,9 +375,15 @@ mod tests {
 
     fn post_sse(
       &self,
-      _request: HttpRequest,
+      request: HttpRequest,
       _on_chunk: &mut dyn FnMut(&str) -> Result<(), BackendError>,
     ) -> Result<(), BackendError> {
+      if request.url.contains("failed.example") {
+        return Err(BackendError::Transport {
+          message: "failed stream".into(),
+          context: None,
+        });
+      }
       Ok(())
     }
   }
@@ -349,7 +430,7 @@ mod tests {
     let mut events = Vec::new();
     dispatch_compiled_plan(&Client, &plan, |event| events.push(event)).unwrap();
     assert!(matches!(events[0], RuntimeRouteEvent::Failed { ref route_id, .. } if route_id == "route-a"));
-    assert!(matches!(events[1], RuntimeRouteEvent::Selected { ref route_id } if route_id == "route-b"));
+    assert!(matches!(events[1], RuntimeRouteEvent::Selected { ref route_id, .. } if route_id == "route-b"));
     assert_eq!(events.len(), 2);
 
     let plan = CompiledPlan::new(vec![CompiledRoute::new(
@@ -359,7 +440,7 @@ mod tests {
     .unwrap();
     let mut events = Vec::new();
     dispatch_compiled_plan(&Client, &plan, |event| events.push(event)).unwrap();
-    assert!(matches!(events[0], RuntimeRouteEvent::Selected { ref route_id } if route_id == "route-zero"));
+    assert!(matches!(events[0], RuntimeRouteEvent::Selected { ref route_id, .. } if route_id == "route-zero"));
     assert!(matches!(
       events[1],
       RuntimeRouteEvent::Usage {
@@ -367,5 +448,75 @@ mod tests {
         usage: RuntimeUsage::Tokens(CoreUsage { total_tokens: 0, .. })
       } if route_id == "route-zero"
     ));
+  }
+  #[test]
+  fn prior_possible_send_survives_later_dns_failure_and_success() {
+    for last in ["dns", "reported-zero"] {
+      let plan = CompiledPlan::new(vec![
+        CompiledRoute::new("first".into(), route("https://failed.example/v1")),
+        CompiledRoute::new("last".into(), route(&format!("https://{last}.example/v1"))),
+      ])
+      .unwrap();
+      let mut events = Vec::new();
+      let result = dispatch_compiled_plan(&Client, &plan, |event| events.push(event));
+      if last == "dns" {
+        assert!(matches!(
+          result,
+          Err(CompiledPlanError::Dispatch {
+            transmission: RequestTransmission::PossiblySent,
+            ..
+          })
+        ));
+        assert!(matches!(
+          events[1],
+          RuntimeRouteEvent::Failed {
+            transmission: RequestTransmission::NotSent,
+            ..
+          }
+        ));
+      } else {
+        result.unwrap();
+        assert!(matches!(
+          events[1],
+          RuntimeRouteEvent::Selected {
+            prior_transmission: RequestTransmission::PossiblySent,
+            ..
+          }
+        ));
+      }
+    }
+  }
+  #[test]
+  fn cancellation_preserves_already_attempted_send_evidence() {
+    for abort_at in [1, 2] {
+      let mut plan = CompiledPlan::new(vec![
+        CompiledRoute::new("first".into(), route("https://failed.example/v1")),
+        CompiledRoute::new("next".into(), route("https://ok.example/v1")),
+      ])
+      .unwrap();
+      let mut checks = 0;
+      let result = dispatch_compiled_round(
+        &Client,
+        &mut plan,
+        &[],
+        || {
+          checks += 1;
+          checks == abort_at
+        },
+        |_| Ok(()),
+        |_| {},
+      );
+      let Err(CompiledPlanError::Dispatch { transmission, .. }) = result else {
+        panic!("cancellation expected")
+      };
+      assert_eq!(
+        transmission,
+        if abort_at == 1 {
+          RequestTransmission::NotSent
+        } else {
+          RequestTransmission::PossiblySent
+        }
+      );
+    }
   }
 }

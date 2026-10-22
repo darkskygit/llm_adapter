@@ -10,8 +10,8 @@ use ureq::{
 
 use super::{
   super::{
-    BackendError, BackendHttpClient, HttpMethod, HttpRawRequest, HttpRawResponse, HttpRequest, HttpResponse,
-    HttpUploadRequest,
+    BackendError, BackendHttpClient, HttpFailureContext, HttpFailureKind, HttpFailureStage, HttpMethod, HttpRawRequest,
+    HttpRawResponse, HttpRequest, HttpResponse, HttpUploadRequest,
   },
   shared::{map_io_error, serialize_http_body, stream_utf8_chunks},
 };
@@ -57,16 +57,24 @@ impl BackendHttpClient for UreqHttpClient {
   fn execute(&self, mut request: HttpRawRequest) -> Result<HttpRawResponse, BackendError> {
     let url = url::Url::parse(&request.url).map_err(|error| BackendError::Transport {
       message: error.to_string(),
+      context: Some(HttpFailureContext {
+        stage: HttpFailureStage::Resolve,
+        kind: HttpFailureKind::InvalidUrl,
+        received_bytes: None,
+      }),
     })?;
     let host = url.host_str().ok_or_else(|| BackendError::Transport {
       message: "request URL has no host".to_string(),
+      context: Some(HttpFailureContext {
+        stage: HttpFailureStage::Resolve,
+        kind: HttpFailureKind::InvalidUrl,
+        received_bytes: None,
+      }),
     })?;
     let addresses = request
       .egress_policy
       .resolve(&request.url)
-      .map_err(|error| BackendError::Transport {
-        message: error.to_string(),
-      })?;
+      .map_err(super::shared::map_egress_error)?;
     let agent = Agent::with_parts(
       Agent::config_builder().max_redirects(0).build(),
       DefaultConnector::new(),
@@ -85,11 +93,25 @@ impl BackendHttpClient for UreqHttpClient {
     for (key, value) in &request.headers {
       builder = builder.header(key, value);
     }
-    let raw_request = builder
-      .body(std::mem::take(&mut request.body))
-      .map_err(|error| BackendError::Transport {
+    let raw_request = builder.body(std::mem::take(&mut request.body)).map_err(|error| {
+      let kind = if error.is::<ureq::http::header::InvalidHeaderName>()
+        || error.is::<ureq::http::header::InvalidHeaderValue>()
+      {
+        HttpFailureKind::InvalidHeader
+      } else if error.is::<ureq::http::uri::InvalidUri>() {
+        HttpFailureKind::InvalidUrl
+      } else {
+        HttpFailureKind::Request
+      };
+      BackendError::Transport {
         message: error.to_string(),
-      })?;
+        context: Some(HttpFailureContext {
+          stage: HttpFailureStage::ClientBuild,
+          kind,
+          received_bytes: None,
+        }),
+      }
+    })?;
     let mut config = agent.configure_request(raw_request).http_status_as_error(false);
     if let Some(timeout_ms) = request.timeout_ms {
       let timeout = Duration::from_millis(timeout_ms);
@@ -190,16 +212,24 @@ impl UreqHttpClient {
   fn build_request(&self, request: &HttpRequest) -> Result<RequestBuilder<ureq::typestate::WithBody>, BackendError> {
     let url = url::Url::parse(&request.url).map_err(|error| BackendError::Transport {
       message: error.to_string(),
+      context: Some(HttpFailureContext {
+        stage: HttpFailureStage::Resolve,
+        kind: HttpFailureKind::InvalidUrl,
+        received_bytes: None,
+      }),
     })?;
     let host = url.host_str().ok_or_else(|| BackendError::Transport {
       message: "request URL has no host".to_string(),
+      context: Some(HttpFailureContext {
+        stage: HttpFailureStage::Resolve,
+        kind: HttpFailureKind::InvalidUrl,
+        received_bytes: None,
+      }),
     })?;
     let addresses = request
       .egress_policy
       .resolve(&request.url)
-      .map_err(|error| BackendError::Transport {
-        message: error.to_string(),
-      })?;
+      .map_err(super::shared::map_egress_error)?;
     let config = Agent::config_builder().max_redirects(0).build();
     let agent = Agent::with_parts(
       config,
@@ -237,16 +267,24 @@ impl UreqHttpClient {
   ) -> Result<RequestBuilder<ureq::typestate::WithBody>, BackendError> {
     let url = url::Url::parse(&request.url).map_err(|error| BackendError::Transport {
       message: error.to_string(),
+      context: Some(HttpFailureContext {
+        stage: HttpFailureStage::Resolve,
+        kind: HttpFailureKind::InvalidUrl,
+        received_bytes: None,
+      }),
     })?;
     let host = url.host_str().ok_or_else(|| BackendError::Transport {
       message: "request URL has no host".to_string(),
+      context: Some(HttpFailureContext {
+        stage: HttpFailureStage::Resolve,
+        kind: HttpFailureKind::InvalidUrl,
+        received_bytes: None,
+      }),
     })?;
     let addresses = request
       .egress_policy
       .resolve(&request.url)
-      .map_err(|error| BackendError::Transport {
-        message: error.to_string(),
-      })?;
+      .map_err(super::shared::map_egress_error)?;
     let agent = Agent::with_parts(
       Agent::config_builder().max_redirects(0).build(),
       DefaultConnector::new(),
@@ -276,14 +314,21 @@ impl UreqHttpClient {
 }
 
 fn map_ureq_error(error: ureq::Error) -> BackendError {
-  if matches!(error, ureq::Error::Timeout(_)) {
-    BackendError::Timeout {
-      message: error.to_string(),
-    }
+  let timeout = matches!(error, ureq::Error::Timeout(_));
+  let context = Some(HttpFailureContext {
+    stage: HttpFailureStage::Send,
+    kind: if timeout {
+      HttpFailureKind::Timeout
+    } else {
+      HttpFailureKind::Other
+    },
+    received_bytes: None,
+  });
+  let message = super::shared::error_chain(&error);
+  if timeout {
+    BackendError::Timeout { message, context }
   } else {
-    BackendError::Transport {
-      message: error.to_string(),
-    }
+    BackendError::Transport { message, context }
   }
 }
 
@@ -318,6 +363,7 @@ fn read_response_bytes_limited(
   if limit.is_some_and(|limit| bytes.len() > limit) {
     return Err(BackendError::Transport {
       message: "HTTP response exceeded configured size limit".to_string(),
+      context: None,
     });
   }
   Ok(bytes)
@@ -325,4 +371,44 @@ fn read_response_bytes_limited(
 
 fn read_response_text(response: &mut ureq::http::Response<ureq::Body>) -> Result<String, BackendError> {
   Ok(String::from_utf8_lossy(&read_response_bytes(response)?).to_string())
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+  use crate::{backend::RequestTransmission, target::EgressPolicy};
+
+  #[test]
+  fn builder_errors_keep_their_actual_source_before_sending() {
+    for (url, headers, kind) in [
+      (
+        "http://127.0.0.1/",
+        vec![("bad header".into(), "value".into())],
+        HttpFailureKind::InvalidHeader,
+      ),
+      (
+        "http://127.0.0.1/",
+        vec![("x-test".into(), "bad\nvalue".into())],
+        HttpFailureKind::InvalidHeader,
+      ),
+      ("http://127.0.0.1/ bad", vec![], HttpFailureKind::InvalidUrl),
+    ] {
+      let error = UreqHttpClient
+        .execute(HttpRawRequest {
+          method: HttpMethod::Post,
+          url: url.to_string(),
+          headers,
+          body: vec![],
+          timeout_ms: Some(1000),
+          egress_policy: EgressPolicy::AllowPrivate,
+          max_response_bytes: None,
+        })
+        .unwrap_err();
+      assert_eq!(error.transmission(), RequestTransmission::NotSent);
+      assert!(
+        matches!(error, BackendError::Transport { context: Some(HttpFailureContext { stage: HttpFailureStage::ClientBuild, kind: actual, .. }), .. } if actual == kind),
+        "{error:?}"
+      );
+    }
+  }
 }

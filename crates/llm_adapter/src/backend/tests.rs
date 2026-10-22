@@ -1329,11 +1329,12 @@ fn should_dispatch_stream_events_with_incrementally() {
       seen.push(event.clone());
       Err(BackendError::Transport {
         message: "stop_after_first_event".to_string(),
+        context: None,
       })
     },
   );
 
-  assert!(matches!(result, Err(BackendError::Transport { message: reason }) if reason == "stop_after_first_event"));
+  assert!(matches!(result, Err(BackendError::Transport { message: reason, .. }) if reason == "stop_after_first_event"));
   assert_eq!(seen.len(), 1);
 }
 

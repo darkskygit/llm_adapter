@@ -101,6 +101,10 @@ impl OpenaiChatStreamEncoder {
           "usage": Value::Null,
         }),
       )],
+      StreamEvent::RefusalDelta { text } => vec![json_frame(
+        None,
+        json!({"id":self.stream_id_or_default(),"object":"chat.completion.chunk","model":self.stream_model_or_default(),"choices":[{"index":0,"delta":{"refusal":text},"finish_reason":Value::Null}]}),
+      )],
       StreamEvent::ToolCallDelta {
         call_id,
         name,
@@ -326,6 +330,14 @@ impl OpenaiResponsesStreamEncoder {
             "delta": text,
             "sequence_number": self.sequence_number,
           }),
+        ));
+        frames
+      }
+      StreamEvent::RefusalDelta { text } => {
+        let mut frames = self.ensure_created();
+        frames.push(self.next_json_frame(
+          Some("response.refusal.delta"),
+          json!({"type":"response.refusal.delta","delta":text,"sequence_number":self.sequence_number}),
         ));
         frames
       }
@@ -622,6 +634,7 @@ impl AnthropicStreamEncoder {
         ));
         frames
       }
+      StreamEvent::RefusalDelta { .. } => Vec::new(),
       StreamEvent::ToolCallDelta {
         call_id,
         name,

@@ -21,6 +21,9 @@ pub enum StreamEvent {
   ReasoningDelta {
     text: String,
   },
+  RefusalDelta {
+    text: String,
+  },
   ToolCallDelta {
     call_id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -76,6 +79,7 @@ mod tests {
         total_tokens: 120,
         cached_tokens: Some(12),
         reported: true,
+        final_reported: true,
       }),
     };
 
@@ -89,7 +93,8 @@ mod tests {
           "prompt_tokens": 100,
           "completion_tokens": 20,
           "total_tokens": 120,
-          "cached_tokens": 12
+          "cached_tokens": 12,
+          "final_reported": true
         }
       })
     );

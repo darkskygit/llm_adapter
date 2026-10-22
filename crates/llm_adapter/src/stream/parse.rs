@@ -6,8 +6,8 @@ use super::{
   super::{
     core::{CoreUsage, StreamEvent},
     protocol::{
-      map_anthropic_finish_reason, map_gemini_finish_reason, map_responses_finish_reason, usage_from_anthropic,
-      usage_from_gemini, usage_from_openai, usage_from_responses,
+      map_anthropic_finish_reason, map_gemini_finish_reason, map_responses_finish_reason, openai::chat_reasoning,
+      usage_from_anthropic, usage_from_gemini, usage_from_openai, usage_from_responses,
     },
     utils::{get_first_str, get_first_str_or, get_str, get_str_or, parse_json_ref, parse_json_string, stringify_json},
   },
@@ -178,7 +178,13 @@ impl OpenaiChatStreamParser {
     }
 
     if let Some(parsed_usage) = json.get("usage").map(|usage| usage_from_openai(Some(usage), 0, 0)) {
-      self.usage = Some(parsed_usage);
+      let usage = if self.finish_reason.is_some() {
+        parsed_usage.into_final()
+      } else {
+        parsed_usage
+      };
+      events.push(StreamEvent::Usage { usage: usage.clone() });
+      self.usage = Some(usage);
     }
 
     Ok(events)
@@ -192,12 +198,13 @@ impl OpenaiChatStreamParser {
         events.push(StreamEvent::TextDelta { text: text.to_string() });
       }
 
-      if let Some(reasoning) = get_str(delta, "reasoning_content")
-        && !reasoning.is_empty()
+      if let Some(text) = chat_reasoning(delta) {
+        events.push(StreamEvent::ReasoningDelta { text });
+      }
+      if let Some(text) = get_str(delta, "refusal")
+        && !text.is_empty()
       {
-        events.push(StreamEvent::ReasoningDelta {
-          text: reasoning.to_string(),
-        });
+        events.push(StreamEvent::RefusalDelta { text: text.to_string() });
       }
 
       if let Some(tool_call_deltas) = delta.get("tool_calls").and_then(Value::as_array) {
@@ -404,7 +411,10 @@ impl OpenaiResponsesStreamParser {
       .or_else(|| get_str(&json, "type"))
       .unwrap_or_default();
 
-    let response = if matches!(event_name, "response.created" | "response.completed") {
+    let response = if matches!(
+      event_name,
+      "response.created" | "response.completed" | "response.incomplete" | "response.failed"
+    ) {
       json.get("response").unwrap_or(&Value::Null)
     } else {
       &json
@@ -425,6 +435,19 @@ impl OpenaiResponsesStreamParser {
     }
 
     self.handle_event(event_name, &json, &mut events);
+    if matches!(
+      event_name,
+      "response.completed" | "response.incomplete" | "response.failed"
+    ) {
+      if let Some(usage) = self.usage.take() {
+        self.usage = Some(usage.into_final());
+      }
+      events.extend(self.flush_terminal_events());
+      if event_name == "response.failed" {
+        events.push(parse_stream_error(&json["response"]));
+      }
+      self.finished = true;
+    }
 
     Ok(events)
   }
@@ -438,6 +461,11 @@ impl OpenaiResponsesStreamParser {
           events.push(StreamEvent::TextDelta {
             text: delta.to_string(),
           });
+        }
+      }
+      "response.refusal.delta" => {
+        if let Some(text) = get_str(json, "delta") {
+          events.push(StreamEvent::RefusalDelta { text: text.to_string() });
         }
       }
       "response.reasoning.delta" => {
@@ -540,7 +568,7 @@ impl OpenaiResponsesStreamParser {
       "response.error" => {
         events.push(parse_stream_error(json));
       }
-      "response.completed" => {
+      "response.completed" | "response.incomplete" | "response.failed" => {
         let response = json.get("response").unwrap_or(&Value::Null);
         self.stream_id = get_str(response, "id")
           .map(ToString::to_string)
@@ -662,6 +690,15 @@ impl GeminiStreamParser {
       && let Some(candidate) = candidates.first()
     {
       self.handle_candidate(candidate, &mut events);
+    }
+    if let Some(usage) = self.usage.take() {
+      let usage = if self.finish_reason.is_some() {
+        usage.into_final()
+      } else {
+        usage
+      };
+      events.push(StreamEvent::Usage { usage: usage.clone() });
+      self.usage = Some(usage);
     }
 
     Ok(events)
@@ -869,6 +906,9 @@ impl AnthropicStreamParser {
           });
           self.started = true;
         }
+        if let Some(usage) = &self.usage {
+          events.push(StreamEvent::Usage { usage: usage.clone() });
+        }
       }
       "content_block_start" => {
         let index = json.get("index").and_then(Value::as_i64).unwrap_or_default();
@@ -970,10 +1010,21 @@ impl AnthropicStreamParser {
         }
 
         if let Some(parsed_usage) = json.get("usage").map(|usage| usage_from_anthropic(Some(usage), 0, 0)) {
-          self.usage = Some(parsed_usage);
+          let previous = self.usage.as_ref();
+          let mut usage = parsed_usage;
+          if json["usage"].get("input_tokens").is_none() {
+            usage.prompt_tokens = previous.map_or(0, |usage| usage.prompt_tokens);
+            usage.cached_tokens = previous.and_then(|usage| usage.cached_tokens);
+          }
+          usage.total_tokens = usage.prompt_tokens.saturating_add(usage.completion_tokens);
+          events.push(StreamEvent::Usage { usage: usage.clone() });
+          self.usage = Some(usage);
         }
       }
       "message_stop" => {
+        if let Some(usage) = self.usage.take() {
+          self.usage = Some(usage.into_final());
+        }
         return true;
       }
       "error" => {
@@ -1097,4 +1148,109 @@ pub fn parse_anthropic_stream(raw: &str) -> Result<Vec<StreamEvent>, StreamParse
 
 pub fn parse_gemini_stream(raw: &str) -> Result<Vec<StreamEvent>, StreamParseError> {
   run_parser(raw, GeminiStreamParser::default())
+}
+
+#[cfg(test)]
+mod tests {
+  use serde_json::json;
+
+  use super::*;
+
+  fn frame(value: Value) -> SseFrame {
+    SseFrame {
+      event: None,
+      data: value.to_string(),
+    }
+  }
+
+  #[test]
+  fn chat_reasoning_details_and_refusal_remain_diagnostic() {
+    // OpenRouter reasoning tokens and OpenAI ChatCompletionChunk delta shapes.
+    // https://openrouter.ai/docs/guides/best-practices/reasoning-tokens
+    // https://developers.openai.com/api/reference/resources/chat
+    for delta in [
+      json!({"reasoning":"{\"ok\":true}","content":null}),
+      json!({"reasoning_details":[{"type":"reasoning.text","text":"{\"ok\":true}","signature":"sig","index":0},{"type":"reasoning.summary","summary":"summary","index":1},{"type":"reasoning.encrypted","data":"opaque","index":2}],"content":null}),
+      json!({"refusal":"I cannot assist with that request.","content":null}),
+    ] {
+      let mut parser = OpenaiChatStreamParser::default();
+      let mut events = parser.push_frame(frame(json!({"id":"diagnostic","choices":[{"index":0,"delta":delta,"finish_reason":"stop"}],"usage":{"prompt_tokens":3,"completion_tokens":2,"total_tokens":5}}))).unwrap();
+      events.extend(parser.finish());
+      assert!(
+        !events
+          .iter()
+          .any(|event| matches!(event, StreamEvent::TextDelta { .. }))
+      );
+      assert!(events.iter().any(|event| matches!(
+        event,
+        StreamEvent::ReasoningDelta { .. } | StreamEvent::RefusalDelta { .. }
+      )));
+      assert!(events.iter().any(
+        |event| matches!(event, StreamEvent::Usage { usage } if usage.final_reported && usage.completion_tokens == 2)
+      ));
+      let encoded = super::super::encode_openai_chat_stream(&events);
+      let decoded = parse_openai_chat_stream(&encoded).unwrap();
+      assert!(
+        !decoded
+          .iter()
+          .any(|event| matches!(event, StreamEvent::TextDelta { .. }))
+      );
+      assert!(decoded.iter().any(|event| matches!(
+        event,
+        StreamEvent::ReasoningDelta { .. } | StreamEvent::RefusalDelta { .. }
+      )));
+    }
+  }
+
+  #[test]
+  fn responses_terminal_usage_is_observed_before_transport_eof() {
+    for status in ["completed", "incomplete"] {
+      let mut parser = OpenaiResponsesStreamParser::default();
+      let events = parser.push_frame(frame(json!({"type":format!("response.{status}"),"response":{"id":"provider-id","status":status,"incomplete_details":if status == "incomplete" {json!({"reason":"max_output_tokens"})} else {Value::Null},"usage":{"input_tokens":3,"output_tokens":2,"total_tokens":5}}}))).unwrap();
+      assert!(
+        events
+          .iter()
+          .any(|event| matches!(event, StreamEvent::MessageStart { id:Some(id), .. } if id == "provider-id"))
+      );
+      assert!(events.iter().any(|event| matches!(event, StreamEvent::Usage { usage } if usage.final_reported && usage.prompt_tokens == 3 && usage.completion_tokens == 2)));
+      assert!(events.iter().any(|event| matches!(event, StreamEvent::Done { finish_reason:Some(reason), .. } if reason == if status == "incomplete" { "length" } else { "stop" })));
+      assert!(parser.finish().is_empty());
+    }
+  }
+
+  #[test]
+  fn partial_usage_and_clean_eof_are_not_authoritative_terminal_usage() {
+    let mut parser = OpenaiChatStreamParser::default();
+    let events = parser.push_frame(frame(json!({"id":"provider-id","choices":[{"delta":{},"finish_reason":null}],"usage":{"prompt_tokens":3,"completion_tokens":2,"total_tokens":5}}))).unwrap();
+    assert!(
+      events
+        .iter()
+        .any(|event| matches!(event, StreamEvent::Usage { usage } if usage.reported && !usage.final_reported))
+    );
+    assert!(
+      parser
+        .finish()
+        .iter()
+        .all(|event| !matches!(event, StreamEvent::Usage { usage } if usage.final_reported))
+    );
+  }
+
+  #[test]
+  fn anthropic_output_delta_preserves_input_and_settles_only_at_message_stop() {
+    let mut parser = AnthropicStreamParser::default();
+    let start = parser.push_frame(frame(json!({"type":"message_start","message":{"id":"provider-id","usage":{"input_tokens":3,"cache_read_input_tokens":2,"output_tokens":0}}}))).unwrap();
+    assert!(
+      start.iter().any(
+        |event| matches!(event, StreamEvent::Usage { usage } if usage.prompt_tokens == 5 && !usage.final_reported)
+      )
+    );
+    let delta = parser
+      .push_frame(frame(
+        json!({"type":"message_delta","delta":{"stop_reason":"max_tokens"},"usage":{"output_tokens":7}}),
+      ))
+      .unwrap();
+    assert!(delta.iter().any(|event| matches!(event, StreamEvent::Usage { usage } if usage.prompt_tokens == 5 && usage.completion_tokens == 7 && !usage.final_reported)));
+    let terminal = parser.push_frame(frame(json!({"type":"message_stop"}))).unwrap();
+    assert!(terminal.iter().any(|event| matches!(event, StreamEvent::Usage { usage } if usage.prompt_tokens == 5 && usage.completion_tokens == 7 && usage.total_tokens == 12 && usage.final_reported)));
+  }
 }

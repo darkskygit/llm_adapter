@@ -466,6 +466,40 @@ pub struct HttpStreamResponse {
   pub body: String,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum HttpFailureStage {
+  Resolve,
+  ClientBuild,
+  Connect,
+  Send,
+  BodyRead,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HttpFailureKind {
+  Timeout,
+  Connect,
+  Request,
+  Body,
+  Decode,
+  InvalidHeader,
+  InvalidUrl,
+  Egress,
+  Dns,
+  ConnectionReset,
+  UnexpectedEof,
+  BrokenPipe,
+  Other,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct HttpFailureContext {
+  pub stage: HttpFailureStage,
+  pub kind: HttpFailureKind,
+  pub received_bytes: Option<u64>,
+}
+
 #[derive(Debug, Error)]
 pub enum BackendError {
   #[error("no backend available")]
@@ -475,9 +509,15 @@ pub enum BackendError {
   #[error("invalid request field `{field}`: {message}")]
   InvalidRequest { field: &'static str, message: String },
   #[error("http transport error: {message}")]
-  Transport { message: String },
+  Transport {
+    message: String,
+    context: Option<HttpFailureContext>,
+  },
   #[error("http timeout error: {message}")]
-  Timeout { message: String },
+  Timeout {
+    message: String,
+    context: Option<HttpFailureContext>,
+  },
   #[error("upstream returned status {status}: {body}")]
   UpstreamStatus { status: u16, body: String },
   #[error("invalid response field `{field}`: {message}")]
@@ -510,4 +550,34 @@ pub trait BackendHttpClient {
     request: HttpRequest,
     on_chunk: &mut dyn FnMut(&str) -> Result<(), BackendError>,
   ) -> Result<(), BackendError>;
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RequestTransmission {
+  NotSent,
+  PossiblySent,
+}
+
+impl BackendError {
+  #[must_use]
+  pub fn transmission(&self) -> RequestTransmission {
+    use RequestTransmission::{NotSent, PossiblySent};
+    match self {
+      Self::NoBackendAvailable | Self::InvalidConfig { .. } | Self::InvalidRequest { .. } => NotSent,
+      Self::Transport {
+        context: Some(context), ..
+      }
+      | Self::Timeout {
+        context: Some(context), ..
+      } if matches!(
+        context.stage,
+        HttpFailureStage::Resolve | HttpFailureStage::ClientBuild | HttpFailureStage::Connect
+      ) =>
+      {
+        NotSent
+      }
+      _ => PossiblySent,
+    }
+  }
 }

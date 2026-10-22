@@ -6,6 +6,27 @@ use super::{
   CoreUsage, ProtocolError, attachment_content_from_source, core_role_to_string, get_str, parse_json, stringify_json,
 };
 
+pub(crate) fn chat_reasoning(value: &Value) -> Option<String> {
+  let details: String = value
+    .get("reasoning_details")
+    .and_then(Value::as_array)
+    .into_iter()
+    .flatten()
+    .filter_map(|detail| {
+      ["text", "summary"]
+        .into_iter()
+        .find_map(|key| get_str(detail, key).filter(|text| !text.is_empty()))
+    })
+    .collect();
+  if !details.is_empty() {
+    return Some(details);
+  }
+  ["reasoning_content", "reasoning"]
+    .into_iter()
+    .find_map(|key| get_str(value, key).filter(|text| !text.is_empty()))
+    .map(ToString::to_string)
+}
+
 #[derive(Debug, Deserialize)]
 pub(crate) struct OpenaiTool {
   #[serde(default)]

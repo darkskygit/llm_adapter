@@ -96,7 +96,7 @@ pub fn decode(body: &Value) -> Result<CoreResponse, ProtocolError> {
 
   let message = CoreMessage { role, content };
   let completion_estimate = message_token_estimate(&message);
-  let usage = usage_from_responses(body.get("usage"), 0, completion_estimate);
+  let usage = usage_from_responses(body.get("usage"), 0, completion_estimate).into_final();
   let finish_reason = super::map_responses_finish_reason(get_str(body, "status"), get_str(body, "finish_reason"));
 
   Ok(CoreResponse {
@@ -280,6 +280,7 @@ mod tests {
         total_tokens: 14,
         cached_tokens: None,
         reported: true,
+        final_reported: true,
       },
       finish_reason: "stop".to_string(),
       reasoning_details: None,

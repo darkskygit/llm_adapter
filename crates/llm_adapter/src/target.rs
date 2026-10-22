@@ -112,7 +112,7 @@ pub enum TargetCompileError {
   #[error("invalid endpoint: {0}")]
   InvalidEndpoint(String),
   #[error("endpoint host could not be resolved")]
-  UnresolvedEndpoint,
+  UnresolvedEndpoint(#[source] std::io::Error),
   #[error("endpoint resolves to a disallowed network address")]
   DisallowedAddress,
 }
@@ -303,10 +303,13 @@ impl EgressPolicy {
       .ok_or_else(|| TargetCompileError::InvalidEndpoint("missing port".to_string()))?;
     let addresses = (host, port)
       .to_socket_addrs()
-      .map_err(|_| TargetCompileError::UnresolvedEndpoint)?
+      .map_err(TargetCompileError::UnresolvedEndpoint)?
       .collect::<Vec<_>>();
     if addresses.is_empty() {
-      return Err(TargetCompileError::UnresolvedEndpoint);
+      return Err(TargetCompileError::UnresolvedEndpoint(std::io::Error::new(
+        std::io::ErrorKind::NotFound,
+        "DNS returned no addresses",
+      )));
     }
     if self == Self::PublicOnly && addresses.iter().any(|address| !is_public(address.ip())) {
       return Err(TargetCompileError::DisallowedAddress);

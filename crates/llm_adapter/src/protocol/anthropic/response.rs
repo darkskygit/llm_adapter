@@ -24,7 +24,7 @@ pub fn decode(body: &Value) -> Result<CoreResponse, ProtocolError> {
 
   let message = CoreMessage { role, content };
   let completion_estimate = message_token_estimate(&message);
-  let usage = usage_from_anthropic(body.get("usage"), 0, completion_estimate);
+  let usage = usage_from_anthropic(body.get("usage"), 0, completion_estimate).into_final();
   let finish_reason = get_str(body, "stop_reason")
     .map(super::map_anthropic_finish_reason)
     .unwrap_or_else(|| "stop".to_string());

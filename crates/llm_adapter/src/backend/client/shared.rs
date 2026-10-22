@@ -1,6 +1,6 @@
 use std::io::{ErrorKind, Read};
 
-use crate::backend::{BackendError, HttpBody, MultipartPart};
+use crate::backend::{BackendError, HttpBody, HttpFailureContext, HttpFailureKind, HttpFailureStage, MultipartPart};
 
 const MULTIPART_BOUNDARY: &str = "llm-adapter-boundary";
 
@@ -101,6 +101,11 @@ fn validate_header_value(value: &str, label: &'static str) -> Result<(), Backend
   if value.bytes().any(|byte| byte.is_ascii_control()) {
     return Err(BackendError::Transport {
       message: format!("{label} contains control characters"),
+      context: Some(HttpFailureContext {
+        stage: HttpFailureStage::ClientBuild,
+        kind: HttpFailureKind::Request,
+        received_bytes: None,
+      }),
     });
   }
   Ok(())
@@ -111,6 +116,11 @@ fn reject_multipart_boundary(bytes: &[u8], boundary: &str) -> Result<(), Backend
   if bytes.windows(boundary.len()).any(|window| window == boundary) {
     return Err(BackendError::Transport {
       message: "multipart part body contains the boundary marker".to_string(),
+      context: Some(HttpFailureContext {
+        stage: HttpFailureStage::ClientBuild,
+        kind: HttpFailureKind::Request,
+        received_bytes: None,
+      }),
     });
   }
   Ok(())
@@ -122,13 +132,27 @@ pub(super) fn stream_utf8_chunks(
 ) -> Result<(), BackendError> {
   let mut buf = [0_u8; 8192];
   let mut pending = Vec::new();
+  let mut received_bytes = 0u64;
 
   loop {
-    let read = reader.read(&mut buf).map_err(map_io_error)?;
+    let read = reader.read(&mut buf).map_err(|error| {
+      let mut error = map_io_error(error);
+      if let BackendError::Transport {
+        context: Some(context), ..
+      }
+      | BackendError::Timeout {
+        context: Some(context), ..
+      } = &mut error
+      {
+        context.received_bytes = Some(received_bytes);
+      }
+      error
+    })?;
     if read == 0 {
       break;
     }
 
+    received_bytes += read as u64;
     pending.extend_from_slice(&buf[..read]);
     let mut consumed = 0usize;
 
@@ -142,6 +166,7 @@ pub(super) fn stream_utf8_chunks(
         if valid_up_to > 0 {
           let valid_text = std::str::from_utf8(&pending[..valid_up_to]).map_err(|decode| BackendError::Transport {
             message: decode.to_string(),
+            context: None,
           })?;
           on_chunk(valid_text)?;
           consumed = valid_up_to;
@@ -168,15 +193,82 @@ pub(super) fn stream_utf8_chunks(
   Ok(())
 }
 
+pub(super) fn error_chain(error: &(dyn std::error::Error + 'static)) -> String {
+  let mut messages = vec![error.to_string()];
+  let mut source = error.source();
+  while let Some(cause) = source {
+    messages.push(cause.to_string());
+    source = cause.source();
+  }
+  messages.join(": ")
+}
+
 pub(super) fn map_io_error(error: std::io::Error) -> BackendError {
-  if error.kind() == ErrorKind::TimedOut {
+  let message = error_chain(&error);
+  #[cfg(feature = "reqwest-client")]
+  {
+    let mut source: Option<&(dyn std::error::Error + 'static)> = error.get_ref().map(|inner| inner as _);
+    while let Some(current) = source {
+      if let Some(reqwest) = current.downcast_ref::<reqwest::Error>() {
+        let kind = super::reqwest::reqwest_failure_kind(reqwest);
+        let context = Some(HttpFailureContext {
+          stage: HttpFailureStage::BodyRead,
+          kind,
+          received_bytes: None,
+        });
+        return if kind == HttpFailureKind::Timeout {
+          BackendError::Timeout {
+            message: message.clone(),
+            context,
+          }
+        } else {
+          BackendError::Transport {
+            message: message.clone(),
+            context,
+          }
+        };
+      }
+      source = current.source();
+    }
+  }
+  let kind = match error.kind() {
+    ErrorKind::TimedOut => HttpFailureKind::Timeout,
+    ErrorKind::ConnectionReset => HttpFailureKind::ConnectionReset,
+    ErrorKind::UnexpectedEof => HttpFailureKind::UnexpectedEof,
+    ErrorKind::BrokenPipe => HttpFailureKind::BrokenPipe,
+    _ => HttpFailureKind::Other,
+  };
+  let context = Some(HttpFailureContext {
+    stage: HttpFailureStage::BodyRead,
+    kind,
+    received_bytes: None,
+  });
+  if kind == HttpFailureKind::Timeout {
     BackendError::Timeout {
-      message: error.to_string(),
+      message: message.clone(),
+      context,
     }
   } else {
     BackendError::Transport {
-      message: error.to_string(),
+      message: message.clone(),
+      context,
     }
+  }
+}
+
+pub(super) fn map_egress_error(error: crate::target::TargetCompileError) -> BackendError {
+  let kind = match &error {
+    crate::target::TargetCompileError::UnresolvedEndpoint(_) => HttpFailureKind::Dns,
+    crate::target::TargetCompileError::DisallowedAddress => HttpFailureKind::Egress,
+    _ => HttpFailureKind::InvalidUrl,
+  };
+  BackendError::Transport {
+    message: error_chain(&error),
+    context: Some(HttpFailureContext {
+      stage: HttpFailureStage::Resolve,
+      kind,
+      received_bytes: None,
+    }),
   }
 }
 
@@ -209,7 +301,7 @@ mod tests {
   fn should_map_timed_out_io_errors_to_timeout() {
     let error = map_io_error(std::io::Error::new(ErrorKind::TimedOut, "read timed out"));
 
-    assert!(matches!(error, BackendError::Timeout { message } if message == "read timed out"));
+    assert!(matches!(error, BackendError::Timeout { message, .. } if message == "read timed out"));
   }
 
   #[test]
@@ -254,5 +346,36 @@ mod tests {
       headers,
       vec![("content-type".to_string(), "application/json".to_string())]
     );
+  }
+  #[test]
+  fn dns_cause_and_policy_rejection_have_distinct_unsent_evidence() {
+    let dns = map_egress_error(crate::target::TargetCompileError::UnresolvedEndpoint(
+      std::io::Error::new(ErrorKind::NotFound, "original resolver cause"),
+    ));
+    let policy = map_egress_error(crate::target::TargetCompileError::DisallowedAddress);
+    for (error, kind) in [(dns, HttpFailureKind::Dns), (policy, HttpFailureKind::Egress)] {
+      assert_eq!(error.transmission(), crate::backend::RequestTransmission::NotSent);
+      assert!(
+        matches!(error, BackendError::Transport { context: Some(HttpFailureContext { kind: found, .. }), .. } if found == kind)
+      );
+      if kind == HttpFailureKind::Dns {
+        assert!(error.to_string().contains("original resolver cause"));
+      }
+    }
+    for kind in [
+      HttpFailureKind::Connect,
+      HttpFailureKind::UnexpectedEof,
+      HttpFailureKind::InvalidHeader,
+    ] {
+      let error = BackendError::Transport {
+        message: "fixture".into(),
+        context: Some(HttpFailureContext {
+          stage: HttpFailureStage::Send,
+          kind,
+          received_bytes: Some(0),
+        }),
+      };
+      assert_eq!(error.transmission(), crate::backend::RequestTransmission::PossiblySent);
+    }
   }
 }

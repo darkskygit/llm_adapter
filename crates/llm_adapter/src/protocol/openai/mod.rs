@@ -4,6 +4,7 @@ pub mod embedding;
 pub mod images;
 pub mod responses;
 
+pub(crate) use common::chat_reasoning;
 use common::{
   OpenaiDecodeRequestInput, OpenaiRequestFlavor, OpenaiTool, decode_openai_request, encode_openai_request,
   messages_from_core, parse_message_content, tool_result_content, usage_to_openai_json,

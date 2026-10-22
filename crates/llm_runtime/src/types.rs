@@ -79,6 +79,9 @@ pub enum ToolLoopEvent {
   ReasoningDelta {
     text: String,
   },
+  RefusalDelta {
+    text: String,
+  },
   ToolCall {
     call_id: String,
     name: String,

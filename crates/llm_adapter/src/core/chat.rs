@@ -168,6 +168,17 @@ pub struct CoreUsage {
   pub cached_tokens: Option<u32>,
   #[serde(skip)]
   pub reported: bool,
+  /// Provider usage covers a terminal result, including a length-limited
+  /// result.
+  #[serde(default)]
+  pub final_reported: bool,
+}
+
+impl CoreUsage {
+  pub fn into_final(mut self) -> Self {
+    self.final_reported = self.reported;
+    self
+  }
 }
 
 #[cfg_attr(feature = "schema", derive(JsonSchema))]

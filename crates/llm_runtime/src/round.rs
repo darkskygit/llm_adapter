@@ -90,6 +90,7 @@ impl RoundProcessor {
       StreamEvent::MessageStart { id, model } => Ok(vec![ToolLoopEvent::MessageStart { id, model }]),
       StreamEvent::TextDelta { text } => Ok(vec![ToolLoopEvent::TextDelta { text }]),
       StreamEvent::ReasoningDelta { text } => Ok(vec![ToolLoopEvent::ReasoningDelta { text }]),
+      StreamEvent::RefusalDelta { text } => Ok(vec![ToolLoopEvent::RefusalDelta { text }]),
       StreamEvent::ToolResult { .. } => Ok(Vec::new()),
       StreamEvent::Citation { index, url } => Ok(vec![ToolLoopEvent::Citation { index, url }]),
       StreamEvent::Usage { usage } => Ok(vec![ToolLoopEvent::Usage { usage }]),
@@ -182,6 +183,38 @@ mod tests {
 
   use super::{RoundProcessor, RoundProcessorError, run_prepared_stream_round_with_fallback, run_stream_round};
   use crate::ToolLoopEvent;
+
+  #[test]
+  fn reasoning_and_refusal_never_become_final_text_or_tool_calls() {
+    let events = llm_adapter::stream::parse_openai_chat_stream(concat!(
+      "data: {\"choices\":[{\"delta\":{\"reasoning\":\"{\\\"ok\\\":true}\",\"reasoning_details\":[{\"type\":\"\
+       reasoning.summary\",\"summary\":\"diagnostic\"}],\"refusal\":\"declined\"},\"finish_reason\":\"stop\"}]}\n\n",
+      "data: [DONE]\n\n",
+    ))
+    .unwrap();
+    let mut emitted = Vec::new();
+    let outcome = run_stream_round(events.into_iter().map(Ok), |event| {
+      emitted.push(event);
+      Ok::<_, RoundProcessorError>(())
+    })
+    .unwrap();
+    assert!(outcome.tool_calls.is_empty());
+    assert!(
+      emitted
+        .iter()
+        .any(|event| matches!(event, ToolLoopEvent::ReasoningDelta { .. }))
+    );
+    assert!(
+      emitted
+        .iter()
+        .any(|event| matches!(event, ToolLoopEvent::RefusalDelta { .. }))
+    );
+    assert!(
+      !emitted
+        .iter()
+        .any(|event| matches!(event, ToolLoopEvent::TextDelta { .. }))
+    );
+  }
 
   #[test]
   fn should_hold_done_until_finish() {

@@ -116,7 +116,7 @@ pub fn decode(body: &Value) -> Result<CoreResponse, ProtocolError> {
       .unwrap_or("gemini")
       .to_string(),
     message,
-    usage: usage_from_gemini(body.get("usageMetadata"), 0, completion_estimate),
+    usage: usage_from_gemini(body.get("usageMetadata"), 0, completion_estimate).into_final(),
     finish_reason,
     reasoning_details: body.get("promptFeedback").cloned(),
   })
@@ -243,6 +243,7 @@ mod tests {
         total_tokens: 11,
         cached_tokens: Some(1),
         reported: true,
+        final_reported: true,
       },
       finish_reason: "tool_calls".to_string(),
       reasoning_details: None,

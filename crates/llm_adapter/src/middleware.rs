@@ -798,6 +798,7 @@ fn event_type_name(event: &StreamEvent) -> &'static str {
     StreamEvent::MessageStart { .. } => "message-start",
     StreamEvent::TextDelta { .. } => "text-delta",
     StreamEvent::ReasoningDelta { .. } => "reasoning-delta",
+    StreamEvent::RefusalDelta { .. } => "refusal-delta",
     StreamEvent::ToolCallDelta { .. } => "tool-call-delta",
     StreamEvent::ToolCall { .. } => "tool-call",
     StreamEvent::ToolResult { .. } => "tool-result",

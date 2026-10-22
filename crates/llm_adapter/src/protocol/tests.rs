@@ -253,3 +253,55 @@ fn encode_should_preserve_tool_call_reasoning_and_usage_across_providers() {
     (case.verify)(&payload);
   }
 }
+
+#[test]
+fn chat_reasoning_uses_one_source_in_streams_and_responses() {
+  use crate::core::{CoreContent, StreamEvent};
+  for (message, expected) in [
+    (
+      json!({"reasoning_details":[{"text":"detail"},{"summary":" summary"}],"reasoning_content":"duplicate","reasoning":"duplicate"}),
+      "detail summary",
+    ),
+    (
+      json!({"reasoning_details":[{"text":"","summary":"summary"}],"reasoning_content":"duplicate"}),
+      "summary",
+    ),
+    (
+      json!({"reasoning_details":[{"data":"opaque"}],"reasoning_content":"content","reasoning":"duplicate"}),
+      "content",
+    ),
+    (
+      json!({"reasoning_details":[],"reasoning_content":"","reasoning":"fallback"}),
+      "fallback",
+    ),
+    (json!({"reasoning":"reason"}), "reason"),
+    (json!({"reasoning_details":[{"text":""}],"reasoning_content":""}), ""),
+  ] {
+    let body = json!({"id":"reasoning","model":"model","choices":[{"message":message,"finish_reason":"stop"}]});
+    let response = openai::chat::response::decode(&body).unwrap();
+    let reasoning: Vec<_> = response
+      .message
+      .content
+      .iter()
+      .filter_map(|content| match content {
+        CoreContent::Reasoning { text, .. } => Some(text.as_str()),
+        _ => None,
+      })
+      .collect();
+    let stream = format!(
+      "data: {}\n\ndata: [DONE]\n\n",
+      json!({"choices":[{"delta":message,"finish_reason":"stop"}]})
+    );
+    let events = crate::stream::parse_openai_chat_stream(&stream).unwrap();
+    let deltas: Vec<_> = events
+      .iter()
+      .filter_map(|event| match event {
+        StreamEvent::ReasoningDelta { text } => Some(text.as_str()),
+        _ => None,
+      })
+      .collect();
+    let expected: Vec<_> = if expected.is_empty() { vec![] } else { vec![expected] };
+    assert_eq!(reasoning, expected, "message={message}");
+    assert_eq!(deltas, expected, "message={message}");
+  }
+}

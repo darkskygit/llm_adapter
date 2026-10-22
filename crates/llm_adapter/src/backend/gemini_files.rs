@@ -314,6 +314,7 @@ fn wait_until_active(
   }
   Err(BackendError::Timeout {
     message: "Gemini file did not become active before the processing deadline".to_string(),
+    context: None,
   })
 }
 

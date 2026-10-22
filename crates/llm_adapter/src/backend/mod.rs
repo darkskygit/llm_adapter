@@ -20,8 +20,9 @@ pub use request_layer::{
 };
 pub use types::{
   BackendConfig, BackendError, BackendHttpClient, BackendRequestLayer, ChatProtocol, EmbeddingProtocol, HttpBody,
-  HttpMethod, HttpRawRequest, HttpRawResponse, HttpRequest, HttpResponse, HttpStreamResponse, HttpUploadRequest,
-  ImageProtocol, MultipartPart, RerankProtocol, SensitiveString, StructuredProtocol,
+  HttpFailureContext, HttpFailureKind, HttpFailureStage, HttpMethod, HttpRawRequest, HttpRawResponse, HttpRequest,
+  HttpResponse, HttpStreamResponse, HttpUploadRequest, ImageProtocol, MultipartPart, RequestTransmission,
+  RerankProtocol, SensitiveString, StructuredProtocol,
 };
 
 #[cfg(test)]

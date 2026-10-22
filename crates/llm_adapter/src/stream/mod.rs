@@ -590,16 +590,16 @@ mod tests {
 
     assert!(matches!(events[0], StreamEvent::MessageStart { .. }));
     assert!(matches!(
-      events[1],
+      events[2],
       StreamEvent::ToolCallDelta { ref call_id, .. } if call_id == "call_1"
     ));
     assert!(matches!(
-      events[2],
+      events[3],
       StreamEvent::ToolCall { ref call_id, ref name, .. } if call_id == "call_1" && name == "doc_read"
     ));
-    assert!(matches!(events[3], StreamEvent::Usage { .. }));
+    assert!(matches!(events[4], StreamEvent::Usage { .. }));
     assert!(matches!(
-      events[4],
+      events[6],
       StreamEvent::Done {
         finish_reason: Some(ref reason),
         ..

@@ -1,9 +1,9 @@
 use serde_json::{Map, Value, json};
 
 use super::{
-  CoreContent, CoreMessage, CoreResponse, CoreRole, OpenaiRequestFlavor, ProtocolError, core_role_to_string, get_str,
-  get_str_or, message_token_estimate, parse_message_content, parse_role_lossy, stringify_json, usage_from_openai,
-  usage_to_openai_json,
+  CoreContent, CoreMessage, CoreResponse, CoreRole, OpenaiRequestFlavor, ProtocolError, chat_reasoning,
+  core_role_to_string, get_str, get_str_or, message_token_estimate, parse_message_content, parse_role_lossy,
+  stringify_json, usage_from_openai, usage_to_openai_json,
 };
 
 fn parse_message_from_response(message: &Value) -> Result<CoreMessage, ProtocolError> {
@@ -28,11 +28,9 @@ fn parse_message_from_response(message: &Value) -> Result<CoreMessage, ProtocolE
   )?;
   content.retain(|item| !matches!(item, CoreContent::Text { text } if text.is_empty()));
 
-  if let Some(reasoning) = get_str(message, "reasoning_content")
-    && !reasoning.is_empty()
-  {
+  if let Some(reasoning) = chat_reasoning(message) {
     content.push(CoreContent::Reasoning {
-      text: reasoning.to_string(),
+      text: reasoning,
       signature: None,
     });
   }
@@ -58,7 +56,7 @@ pub fn decode(body: &Value) -> Result<CoreResponse, ProtocolError> {
       .ok_or(ProtocolError::MissingResponseField("openai_chat.choices[0].message"))?,
   )?;
   let completion_estimate = message_token_estimate(&message);
-  let usage = usage_from_openai(body.get("usage"), 0, completion_estimate);
+  let usage = usage_from_openai(body.get("usage"), 0, completion_estimate).into_final();
   let finish_reason = get_str_or(choice, "finish_reason", "stop").to_string();
 
   Ok(CoreResponse {

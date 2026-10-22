@@ -184,6 +184,7 @@ pub(crate) fn usage_from_openai(usage: Option<&Value>, prompt_estimate: u32, com
     total_tokens,
     cached_tokens,
     reported,
+    final_reported: false,
   }
 }
 
@@ -197,7 +198,10 @@ pub(crate) fn map_anthropic_finish_reason(reason: &str) -> String {
 
 pub(crate) fn map_responses_finish_reason(status: Option<&str>, finish_reason: Option<&str>) -> String {
   if let Some(reason) = finish_reason {
-    return reason.to_string();
+    return match reason {
+      "max_output_tokens" => "length".to_string(),
+      other => other.to_string(),
+    };
   }
 
   match status {
@@ -221,6 +225,7 @@ pub(crate) fn usage_from_responses(usage: Option<&Value>, prompt_estimate: u32, 
     total_tokens,
     cached_tokens,
     reported,
+    final_reported: false,
   }
 }
 
@@ -247,6 +252,7 @@ pub(crate) fn usage_from_anthropic(usage: Option<&Value>, prompt_estimate: u32, 
       None
     },
     reported,
+    final_reported: false,
   }
 }
 
@@ -283,6 +289,7 @@ pub(crate) fn usage_from_gemini(usage: Option<&Value>, prompt_estimate: u32, com
     total_tokens,
     cached_tokens: (cached_tokens > 0).then_some(cached_tokens),
     reported,
+    final_reported: false,
   }
 }
 

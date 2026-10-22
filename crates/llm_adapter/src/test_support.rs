@@ -93,6 +93,7 @@ pub(crate) fn sample_response_with_reasoning_tool_call() -> CoreResponse {
       total_tokens: 120,
       cached_tokens: Some(12),
       reported: true,
+      final_reported: true,
     },
     finish_reason: "tool_calls".to_string(),
     reasoning_details: Some(json!({ "effort": "medium" })),
@@ -204,6 +205,7 @@ impl BackendHttpClient for MockHttpClient {
         for chunk in response.body.as_bytes().chunks(self.stream_chunk_size) {
           let text = std::str::from_utf8(chunk).map_err(|error| BackendError::Transport {
             message: error.to_string(),
+            context: None,
           })?;
           on_chunk(text)?;
         }
