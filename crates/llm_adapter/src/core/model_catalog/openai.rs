@@ -8,6 +8,78 @@ pub(super) fn openai_variants(image_attachment: &CapabilityAttachmentContract) -
   vec![
     variant(
       "openai_responses",
+      "gpt-6-astra",
+      "gpt-6-astra",
+      &["gpt-6-astra"],
+      &[],
+      vec![capability_with_attachments(
+        &["text", "image"],
+        &["text", "object", "structured"],
+        image_attachment.clone(),
+        Some(image_attachment.clone()),
+        false,
+      )],
+      Some("openai_responses"),
+      Some("responses"),
+      &["reasoning_supported"],
+      Some("GPT-6 Astra"),
+    ),
+    variant(
+      "openai_responses",
+      "gpt-6.1-sol",
+      "gpt-6.1-sol",
+      &["gpt-6.1-sol"],
+      &[],
+      vec![capability_with_attachments(
+        &["text", "image"],
+        &["text", "object", "structured"],
+        image_attachment.clone(),
+        Some(image_attachment.clone()),
+        false,
+      )],
+      Some("openai_responses"),
+      Some("responses"),
+      &["reasoning_supported"],
+      Some("GPT-6.1 Sol"),
+    ),
+    variant(
+      "openai_responses",
+      "gpt-6.1-terra",
+      "gpt-6.1-terra",
+      &["gpt-6.1-terra"],
+      &[],
+      vec![capability_with_attachments(
+        &["text", "image"],
+        &["text", "object", "structured"],
+        image_attachment.clone(),
+        Some(image_attachment.clone()),
+        false,
+      )],
+      Some("openai_responses"),
+      Some("responses"),
+      &["reasoning_supported"],
+      Some("GPT-6.1 Terra"),
+    ),
+    variant(
+      "openai_responses",
+      "gpt-6-luna",
+      "gpt-6-luna",
+      &["gpt-6-luna"],
+      &[],
+      vec![capability_with_attachments(
+        &["text", "image"],
+        &["text", "object", "structured"],
+        image_attachment.clone(),
+        Some(image_attachment.clone()),
+        false,
+      )],
+      Some("openai_responses"),
+      Some("responses"),
+      &["reasoning_supported"],
+      Some("GPT-6 Luna"),
+    ),
+    variant(
+      "openai_responses",
       "gpt-5.6-sol",
       "gpt-5.6-sol",
       &["gpt-5.6-sol", "gpt-5.6"],
@@ -78,8 +150,12 @@ pub(super) fn openai_variants(image_attachment: &CapabilityAttachmentContract) -
       &[],
       Some("GPT 4o"),
     ),
-    {
-      let mut model = variant(
+    ModelRegistryVariantContract {
+      route_overrides: Some(BTreeMap::from([(
+        "rerank".to_string(),
+        route(Some("openai_chat"), Some("chat_completions")),
+      )])),
+      ..variant(
         "openai_responses",
         "gpt-4o-mini",
         "gpt-4o-mini",
@@ -96,15 +172,14 @@ pub(super) fn openai_variants(image_attachment: &CapabilityAttachmentContract) -
         Some("responses"),
         &[],
         Some("GPT 4o Mini"),
-      );
-      model.route_overrides = Some(BTreeMap::from([(
+      )
+    },
+    ModelRegistryVariantContract {
+      route_overrides: Some(BTreeMap::from([(
         "rerank".to_string(),
         route(Some("openai_chat"), Some("chat_completions")),
-      )]));
-      model
-    },
-    {
-      let mut model = variant(
+      )])),
+      ..variant(
         "openai_responses",
         "gpt-4.1",
         "gpt-4.1",
@@ -121,15 +196,14 @@ pub(super) fn openai_variants(image_attachment: &CapabilityAttachmentContract) -
         Some("responses"),
         &[],
         Some("GPT 4.1"),
-      );
-      model.route_overrides = Some(BTreeMap::from([(
+      )
+    },
+    ModelRegistryVariantContract {
+      route_overrides: Some(BTreeMap::from([(
         "rerank".to_string(),
         route(Some("openai_chat"), Some("chat_completions")),
-      )]));
-      model
-    },
-    {
-      let mut model = variant(
+      )])),
+      ..variant(
         "openai_responses",
         "gpt-4.1-mini",
         "gpt-4.1-mini",
@@ -146,15 +220,14 @@ pub(super) fn openai_variants(image_attachment: &CapabilityAttachmentContract) -
         Some("responses"),
         &[],
         Some("GPT 4.1 Mini"),
-      );
-      model.route_overrides = Some(BTreeMap::from([(
+      )
+    },
+    ModelRegistryVariantContract {
+      route_overrides: Some(BTreeMap::from([(
         "rerank".to_string(),
         route(Some("openai_chat"), Some("chat_completions")),
-      )]));
-      model
-    },
-    {
-      let mut model = variant(
+      )])),
+      ..variant(
         "openai_responses",
         "gpt-4.1-nano",
         "gpt-4.1-nano",
@@ -171,12 +244,7 @@ pub(super) fn openai_variants(image_attachment: &CapabilityAttachmentContract) -
         Some("responses"),
         &[],
         Some("GPT 4.1 Nano"),
-      );
-      model.route_overrides = Some(BTreeMap::from([(
-        "rerank".to_string(),
-        route(Some("openai_chat"), Some("chat_completions")),
-      )]));
-      model
+      )
     },
     variant(
       "openai_responses",
@@ -214,8 +282,12 @@ pub(super) fn openai_variants(image_attachment: &CapabilityAttachmentContract) -
       &[],
       Some("GPT 5 Mini"),
     ),
-    {
-      let mut model = variant(
+    ModelRegistryVariantContract {
+      route_overrides: Some(BTreeMap::from([(
+        "rerank".to_string(),
+        route(Some("openai_chat"), Some("chat_completions")),
+      )])),
+      ..variant(
         "openai_responses",
         "gpt-5.2",
         "gpt-5.2",
@@ -232,12 +304,7 @@ pub(super) fn openai_variants(image_attachment: &CapabilityAttachmentContract) -
         Some("responses"),
         &[],
         Some("GPT 5.2"),
-      );
-      model.route_overrides = Some(BTreeMap::from([(
-        "rerank".to_string(),
-        route(Some("openai_chat"), Some("chat_completions")),
-      )]));
-      model
+      )
     },
     variant(
       "openai_responses",
@@ -332,54 +399,6 @@ pub(super) fn openai_variants(image_attachment: &CapabilityAttachmentContract) -
       vec![capability(&["text"], &["embedding"], false)],
       Some("openai_responses"),
       Some("responses"),
-      &[],
-      None,
-    ),
-    variant(
-      "openai_responses",
-      "dall-e-3",
-      "dall-e-3",
-      &["dall-e-3"],
-      &[],
-      vec![capability(&["text"], &["image"], false)],
-      Some("openai_images"),
-      Some("openai_images"),
-      &[],
-      None,
-    ),
-    variant(
-      "openai_responses",
-      "gpt-image-2",
-      "gpt-image-2",
-      &["gpt-image-2"],
-      &["gpt-image-2-2026-04-21"],
-      vec![capability_with_attachments(
-        &["text", "image"],
-        &["image"],
-        image_attachment.clone(),
-        Some(image_attachment.clone()),
-        true,
-      )],
-      Some("openai_images"),
-      Some("openai_images"),
-      &[],
-      Some("GPT Image 2"),
-    ),
-    variant(
-      "openai_responses",
-      "gpt-image-1",
-      "gpt-image-1",
-      &["gpt-image-1"],
-      &[],
-      vec![capability_with_attachments(
-        &["text", "image"],
-        &["image"],
-        image_attachment.clone(),
-        Some(image_attachment.clone()),
-        false,
-      )],
-      Some("openai_images"),
-      Some("openai_images"),
       &[],
       None,
     ),

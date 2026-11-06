@@ -1,6 +1,8 @@
-use super::helpers::{ModelRegistryVariantContract, capability, variant};
+use super::helpers::{
+  CapabilityAttachmentContract, ModelRegistryVariantContract, capability, capability_with_attachments, variant,
+};
 
-pub(super) fn deepseek_variants() -> Vec<ModelRegistryVariantContract> {
+pub(super) fn deepseek_variants(image_attachment: &CapabilityAttachmentContract) -> Vec<ModelRegistryVariantContract> {
   vec![
     variant(
       "deepseek",
@@ -16,15 +18,21 @@ pub(super) fn deepseek_variants() -> Vec<ModelRegistryVariantContract> {
     ),
     variant(
       "deepseek",
-      "deepseek-v4-flash",
-      "deepseek-v4-flash",
-      &["deepseek-v4-flash"],
-      &["deepseek-chat", "deepseek-reasoner"],
-      vec![capability(&["text"], &["text", "object", "structured"], false)],
+      "deepseek-flash",
+      "deepseek-flash",
+      &["deepseek-flash"],
+      &["deepseek-v4-flash", "deepseek-v4-flash-vision-exp"],
+      vec![capability_with_attachments(
+        &["text", "image"],
+        &["text", "object", "structured"],
+        image_attachment.clone(),
+        Some(image_attachment.clone()),
+        false,
+      )],
       Some("openai_chat"),
       Some("chat_completions"),
       &["reasoning_supported"],
-      Some("DeepSeek V4 Flash"),
+      Some("DeepSeek V4.1 Flash"),
     ),
   ]
 }

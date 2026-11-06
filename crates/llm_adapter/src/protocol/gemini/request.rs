@@ -117,11 +117,14 @@ fn is_gemini_3_flash_family(model: &str) -> bool {
 }
 
 fn supports_minimal_thinking_level(model: &str) -> bool {
-  is_gemini_3_flash_family(model) && model != "gemini-3.7-flash"
+  is_gemini_3_flash_family(model) && !matches!(model, "gemini-3.7-flash" | "gemini-3.8-flash")
 }
 
 fn supports_sampling_parameters(model: &str) -> bool {
-  !matches!(model, "gemini-3.7-flash" | "gemini-3.6-flash" | "gemini-3.5-flash-lite")
+  !matches!(
+    model,
+    "gemini-3.8-flash" | "gemini-3.7-flash" | "gemini-3.6-flash" | "gemini-3.5-flash-lite"
+  )
 }
 
 fn normalize_gemini_3_thinking_level(model: &str, level: &str) -> &'static str {
@@ -1047,7 +1050,12 @@ mod tests {
 
   #[test]
   fn encode_should_omit_deprecated_sampling_parameters_for_latest_flash_models() {
-    for model in ["gemini-3.7-flash", "gemini-3.6-flash", "gemini-3.5-flash-lite"] {
+    for model in [
+      "gemini-3.8-flash",
+      "gemini-3.7-flash",
+      "gemini-3.6-flash",
+      "gemini-3.5-flash-lite",
+    ] {
       let payload = encode(
         &CoreRequest {
           model: model.to_string(),

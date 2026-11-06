@@ -4,7 +4,9 @@ mod gemini;
 mod helpers;
 mod kimi;
 mod openai;
-mod opencode;
+mod openai_image;
+mod opencode_go;
+mod opencode_zen;
 mod other;
 
 use self::{
@@ -14,7 +16,9 @@ use self::{
   helpers::{ModelRegistryVariantContract, attachment},
   kimi::kimi_variants,
   openai::openai_variants,
-  opencode::{opencode_go_variants, opencode_zen_variants},
+  openai_image::openai_image_variants,
+  opencode_go::opencode_go_variants,
+  opencode_zen::opencode_zen_variants,
   other::{cloudflare_variants, fal_variants, morph_variants, perplexity_variants},
 };
 
@@ -26,17 +30,21 @@ pub(crate) fn registry_variants() -> Vec<ModelRegistryVariantContract> {
     true,
   );
 
-  let mut variants = Vec::new();
-  variants.extend(openai_variants(&image_attachment));
-  variants.extend(cloudflare_variants(&image_attachment));
-  variants.extend(fal_variants(&image_attachment));
-  variants.extend(gemini_variants(&gemini_attachment));
-  variants.extend(perplexity_variants());
-  variants.extend(anthropic_variants(&image_attachment));
-  variants.extend(morph_variants());
-  variants.extend(deepseek_variants());
-  variants.extend(kimi_variants(&image_attachment));
-  variants.extend(opencode_go_variants());
-  variants.extend(opencode_zen_variants());
-  variants
+  [
+    openai_variants(&image_attachment),
+    openai_image_variants(&image_attachment),
+    cloudflare_variants(&image_attachment),
+    fal_variants(&image_attachment),
+    gemini_variants(&gemini_attachment),
+    perplexity_variants(),
+    anthropic_variants(&image_attachment),
+    morph_variants(),
+    deepseek_variants(&image_attachment),
+    kimi_variants(&image_attachment),
+    opencode_go_variants(),
+    opencode_zen_variants(),
+  ]
+  .into_iter()
+  .flatten()
+  .collect()
 }

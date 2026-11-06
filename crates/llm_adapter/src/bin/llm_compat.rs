@@ -491,7 +491,7 @@ impl Default for CompatibilityConfig {
       ProviderConfig {
         enabled: false,
         base_url: "https://api.openai.com/v1".to_string(),
-        model: "gpt-image-1".to_string(),
+        model: "gpt-image-2.6-flare".to_string(),
         auth_token_env: Some("OPENAI_API_KEY".to_string()),
         requires_auth: true,
         chat_protocol: None,

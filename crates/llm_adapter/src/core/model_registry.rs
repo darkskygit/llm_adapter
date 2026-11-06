@@ -683,19 +683,25 @@ mod tests {
     let (openai, openai_matched_by) = resolve_model_registry_variant(&variants, Some("openai_responses"), "gpt-5.6")
       .unwrap()
       .unwrap();
-    let (anthropic, _) = resolve_model_registry_variant(&variants, Some("anthropic"), "claude-fable-5")
-      .unwrap()
-      .unwrap();
-    let (gemini, _) = resolve_model_registry_variant(&variants, Some("gemini_api"), "gemini-3.7-flash")
-      .unwrap()
-      .unwrap();
-    let (kimi, _) = resolve_model_registry_variant(&variants, Some("kimi"), "kimi-k3")
-      .unwrap()
-      .unwrap();
-    let (opencode_go, opencode_matched_by) =
-      resolve_model_registry_variant(&variants, Some("opencode_go"), "opencode-go/kimi-k3")
+    for (backend, model, layer) in [
+      ("openai_responses", "gpt-6-astra", "responses"),
+      ("openai_responses", "gpt-6.1-sol", "responses"),
+      ("openai_responses", "gpt-6.1-terra", "responses"),
+      ("openai_responses", "gpt-6-luna", "responses"),
+      ("anthropic", "claude-fable-5-1", "anthropic"),
+      ("anthropic_vertex", "claude-opus-5-5", "anthropic_vertex"),
+      ("gemini_api", "gemini-3.8-flash", "gemini_api"),
+      ("gemini_vertex", "gemini-3.8-flash", "gemini_vertex"),
+      ("kimi", "kimi-k3.1-pro-highspeed", "chat_completions"),
+      ("opencode_go", "glm-5.3", "chat_completions"),
+      ("opencode_zen", "glm-5.3-flash", "chat_completions"),
+    ] {
+      let (variant, _) = resolve_model_registry_variant(&variants, Some(backend), model)
         .unwrap()
         .unwrap();
+      assert_eq!(variant.raw_model_id, model);
+      assert_eq!(variant.request_layer.as_deref(), Some(layer));
+    }
     let (gemini_lite, gemini_lite_matched_by) =
       resolve_model_registry_variant(&variants, Some("gemini_api"), "gemini-3.1-flash-lite-preview")
         .unwrap()
@@ -707,11 +713,6 @@ mod tests {
 
     assert_eq!(openai_matched_by, "alias");
     assert_eq!(openai.raw_model_id, "gpt-5.6-sol");
-    assert_eq!(anthropic.raw_model_id, "claude-fable-5");
-    assert_eq!(gemini.raw_model_id, "gemini-3.7-flash");
-    assert_eq!(kimi.raw_model_id, "kimi-k3");
-    assert_eq!(opencode_matched_by, "alias");
-    assert_eq!(opencode_go.raw_model_id, "kimi-k3");
     assert_eq!(gemini_lite_matched_by, "legacy_alias");
     assert_eq!(gemini_lite.raw_model_id, "gemini-3.1-flash-lite");
     assert_eq!(image_matched_by, "legacy_alias");
@@ -765,9 +766,10 @@ mod tests {
     let (deepseek, _) = resolve_model_registry_variant(&variants, Some("deepseek"), "deepseek-v4-pro")
       .unwrap()
       .unwrap();
-    let (deepseek_legacy, matched_by) = resolve_model_registry_variant(&variants, Some("deepseek"), "deepseek-chat")
-      .unwrap()
-      .unwrap();
+    let (deepseek_legacy, matched_by) =
+      resolve_model_registry_variant(&variants, Some("deepseek"), "deepseek-v4-flash")
+        .unwrap()
+        .unwrap();
     let (kimi, _) = resolve_model_registry_variant(&variants, Some("kimi"), "kimi-k2.7-code-highspeed")
       .unwrap()
       .unwrap();
@@ -778,7 +780,7 @@ mod tests {
 
     assert_eq!(deepseek.request_layer.as_deref(), Some("chat_completions"));
     assert_eq!(matched_by, "legacy_alias");
-    assert_eq!(deepseek_legacy.raw_model_id, "deepseek-v4-flash");
+    assert_eq!(deepseek_legacy.raw_model_id, "deepseek-flash");
     assert_eq!(kimi.request_layer.as_deref(), Some("chat_completions"));
     assert_eq!(matched_go_by, "alias");
     assert_eq!(opencode_go.raw_model_id, "kimi-k2.7-code");

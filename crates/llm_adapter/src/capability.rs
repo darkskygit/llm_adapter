@@ -349,6 +349,7 @@ mod tests {
       ("fal", "lora/image-to-image"),
       ("openai", "gpt-image-1"),
       ("openai", "gpt-image-2"),
+      ("openai", "gpt-image-2.6-flare"),
     ] {
       let upper = provider_default_capability_upper_bound(provider, model).unwrap();
       for source in [AttachmentSource::Data, AttachmentSource::Bytes] {
